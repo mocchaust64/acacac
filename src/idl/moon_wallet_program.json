@@ -1,0 +1,695 @@
+{
+  "address": "6ZdBC4e4zKYtn8vBEGZwHJFGoyn1FHFdP164v27qdoMk",
+  "metadata": {
+    "name": "moon_wallet_program",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "add_guardian",
+      "discriminator": [
+        167,
+        189,
+        170,
+        27,
+        74,
+        240,
+        201,
+        241
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  117,
+                  108,
+                  116,
+                  105,
+                  115,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "guardian",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  117,
+                  97,
+                  114,
+                  100,
+                  105,
+                  97,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "multisig"
+              },
+              {
+                "kind": "account",
+                "path": "guardian_pubkey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "guardian_pubkey"
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "guardian_pubkey",
+          "type": "pubkey"
+        },
+        {
+          "name": "guardian_name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "add_owner",
+      "discriminator": [
+        211,
+        140,
+        15,
+        161,
+        64,
+        48,
+        232,
+        184
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  117,
+                  108,
+                  116,
+                  105,
+                  115,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "new_owner",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "configure_webauthn",
+      "discriminator": [
+        40,
+        149,
+        116,
+        224,
+        148,
+        48,
+        159,
+        54
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  117,
+                  108,
+                  116,
+                  105,
+                  115,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "webauthn_pubkey",
+          "type": {
+            "array": [
+              "u8",
+              65
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_multisig",
+      "discriminator": [
+        220,
+        130,
+        117,
+        21,
+        27,
+        227,
+        78,
+        213
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  117,
+                  108,
+                  116,
+                  105,
+                  115,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "fee_payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "threshold",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "remove_guardian",
+      "discriminator": [
+        72,
+        117,
+        160,
+        244,
+        155,
+        185,
+        71,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  117,
+                  108,
+                  116,
+                  105,
+                  115,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "guardian",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  117,
+                  97,
+                  114,
+                  100,
+                  105,
+                  97,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "multisig"
+              },
+              {
+                "kind": "account",
+                "path": "guardian_pubkey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "guardian_pubkey"
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "remove_owner",
+      "discriminator": [
+        153,
+        251,
+        84,
+        208,
+        33,
+        62,
+        15,
+        247
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  117,
+                  108,
+                  116,
+                  105,
+                  115,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "owner_to_remove",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "update_guardian_status",
+      "discriminator": [
+        17,
+        169,
+        132,
+        234,
+        235,
+        231,
+        211,
+        79
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  117,
+                  108,
+                  116,
+                  105,
+                  115,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "guardian",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  117,
+                  97,
+                  114,
+                  100,
+                  105,
+                  97,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "multisig"
+              },
+              {
+                "kind": "account",
+                "path": "guardian_pubkey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "guardian_pubkey"
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "is_active",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "update_recovery_key",
+      "discriminator": [
+        76,
+        163,
+        104,
+        28,
+        124,
+        163,
+        255,
+        101
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  117,
+                  108,
+                  116,
+                  105,
+                  115,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "recovery_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Guardian",
+      "discriminator": [
+        57,
+        234,
+        122,
+        214,
+        12,
+        246,
+        9,
+        45
+      ]
+    },
+    {
+      "name": "MultiSigWallet",
+      "discriminator": [
+        93,
+        17,
+        107,
+        133,
+        10,
+        77,
+        189,
+        238
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidOperation",
+      "msg": "Không có quyền hoặc dữ liệu không hợp lệ"
+    },
+    {
+      "code": 6001,
+      "name": "LimitExceeded",
+      "msg": "Giới hạn đã đạt tối đa"
+    },
+    {
+      "code": 6002,
+      "name": "GuardianError",
+      "msg": "Guardian không hợp lệ"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidConfig",
+      "msg": "Cấu hình không hợp lệ"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidRecovery",
+      "msg": "Recovery không hợp lệ"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidThreshold",
+      "msg": "Ngưỡng không hợp lệ"
+    },
+    {
+      "code": 6006,
+      "name": "WebAuthnNotConfigured",
+      "msg": "WebAuthn chưa được cấu hình"
+    },
+    {
+      "code": 6007,
+      "name": "NameTooLong",
+      "msg": "Tên ví không được vượt quá 32 ký tự"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidRecoveryKey",
+      "msg": "Recovery key không hợp lệ"
+    },
+    {
+      "code": 6009,
+      "name": "NoGuardians",
+      "msg": "Không có guardian nào để xóa"
+    }
+  ],
+  "types": [
+    {
+      "name": "Guardian",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "guardian",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MultiSigWallet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "threshold",
+            "type": "u8"
+          },
+          {
+            "name": "has_webauthn",
+            "type": "bool"
+          },
+          {
+            "name": "webauthn_pubkey",
+            "type": {
+              "array": [
+                "u8",
+                65
+              ]
+            }
+          },
+          {
+            "name": "guardian_count",
+            "type": "u8"
+          },
+          {
+            "name": "recovery_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "owners",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "name",
+            "type": "string"
+          }
+        ]
+      }
+    }
+  ]
+}
