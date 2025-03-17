@@ -4,10 +4,8 @@ import { ConnectionProvider } from '@solana/wallet-adapter-react';
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import { clusterApiUrl } from '@solana/web3.js';
 import { WalletManager } from './components/WalletManager';
-import { WebAuthnLogin } from './components/WebAuthnLogin';
-import './components/WebAuthnLogin.css'; // Import CSS
 import { WalletInfo } from './components/WalletInfo';
-import { WebAuthnImport } from './components/WebAuthnImport';
+import { WebAuthnLogin } from './components/WebAuthnLogin';
 
 // Default styles
 require('@solana/wallet-adapter-react-ui/styles.css');
@@ -33,10 +31,9 @@ function App() {
   const endpoint = useMemo(() => clusterApiUrl(network), [network]);
 
   // Kiểm tra localStorage xem đã có ví chưa
-  const [walletInfo, setWalletInfo] = useState<any>(null);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [walletAddress, setWalletAddress] = useState<string>('');
-  const [showImport, setShowImport] = useState<boolean>(false);
+  const [showCreateWallet, setShowCreateWallet] = useState<boolean>(false);
 
   // Kiểm tra localStorage khi component được mount
   useEffect(() => {
@@ -60,34 +57,25 @@ function App() {
 
   // Hàm xử lý khi ví được tạo
   const handleWalletCreated = (address: string) => {
-    console.log("Ví đã được tạo, địa chỉ chuỗi:", address);
+    console.log("Ví đã được tạo, địa chỉ:", address);
     setWalletAddress(address);
     setIsLoggedIn(true);
+    setShowCreateWallet(false);
   };
 
   const handleReset = () => {
     // Xóa thông tin ví khỏi localStorage và state
     localStorage.removeItem('walletInfo');
-    setWalletInfo(null);
     setIsLoggedIn(false);
+    setWalletAddress('');
   };
-
-  // Hàm xử lý khi import credential thành công
-  const handleCredentialImported = (address: string) => {
-    console.log("Đã import credential thành công:", address);
-    setWalletAddress(address);
-    setIsLoggedIn(true);
-    setShowImport(false);
-  };
-
-  console.log("Current wallet address in state:", walletAddress);
 
   return (
     <ConnectionProvider endpoint={endpoint}>
       <div className="App">
         <header className="App-header">
           <h1>Moon Wallet</h1>
-          {walletInfo && (
+          {isLoggedIn && (
             <button onClick={handleReset} className="reset-button">
               Đặt lại
             </button>
@@ -99,10 +87,7 @@ function App() {
               <WalletInfo walletAddress={walletAddress} />
               <button 
                 className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded"
-                onClick={() => {
-                  setIsLoggedIn(false);
-                  // Không xóa walletAddress khi đăng xuất để có thể đăng nhập lại dễ dàng
-                }}
+                onClick={() => setIsLoggedIn(false)}
               >
                 Đăng xuất
               </button>
@@ -111,33 +96,28 @@ function App() {
             <div className="min-h-screen bg-gray-900 text-white p-4">
               <h1 className="text-2xl font-bold mb-6">Moon Wallet</h1>
               
-              {!showImport ? (
+              {showCreateWallet ? (
                 <>
-                  <div className="flex space-x-4 mb-6">
-                    <WalletManager onWalletCreated={handleWalletCreated} />
-                    <WebAuthnLogin 
-                      walletInfo={getStoredWalletInfo()}
-                      onLoginSuccess={handleLoginSuccess} 
-                    />
-                  </div>
-                  
+                  <WalletManager onWalletCreated={handleWalletCreated} />
                   <button
                     className="text-blue-400 hover:text-blue-300 mt-4 block"
-                    onClick={() => setShowImport(true)}
+                    onClick={() => setShowCreateWallet(false)}
                   >
-                    Thiết bị mới? Đăng nhập bằng WebAuthn và khôi phục ví
+                    Quay lại đăng nhập
                   </button>
                 </>
               ) : (
                 <>
-                  <WebAuthnImport onCredentialImported={handleCredentialImported} />
-                  
-                  <button
-                    className="text-blue-400 hover:text-blue-300 mt-4 block"
-                    onClick={() => setShowImport(false)}
-                  >
-                    Quay lại đăng nhập/đăng ký
-                  </button>
+                  <WebAuthnLogin onLoginSuccess={handleLoginSuccess} />
+                  <div className="text-center mt-4">
+                    <span className="text-gray-400">Chưa có ví? </span>
+                    <button
+                      className="text-blue-400 hover:text-blue-300"
+                      onClick={() => setShowCreateWallet(true)}
+                    >
+                      Tạo ví mới
+                    </button>
+                  </div>
                 </>
               )}
             </div>

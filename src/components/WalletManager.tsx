@@ -128,12 +128,13 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ onWalletCreated })
       console.log("Multisig PDA mới:", newMultisigPDA.toString());
       
       // Lưu thông tin ví vào localStorage
-      saveWalletToLocalStorage(
+      const walletAddress = saveWalletInfo(
         newMultisigPDA.toString(),
-        webauthnCredentialId, 
-        webauthnPubkey,
-        Array.from(recoveryHash),
-        walletName || `Ví ${newMultisigPDA.toString().slice(0, 4)}...${newMultisigPDA.toString().slice(-4)}`
+        {
+          id: webauthnCredentialId,
+          publicKey: webauthnPubkey
+        },
+        walletName
       );
       
       // Khởi tạo ví trên blockchain
@@ -146,7 +147,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ onWalletCreated })
       
       // Thông báo tạo ví thành công
       if (onWalletCreated) {
-        onWalletCreated(newMultisigPDA.toString());
+        onWalletCreated(walletAddress);
       }
       
       setMultisigPDA(newMultisigPDA);
@@ -161,32 +162,21 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ onWalletCreated })
   };
 
   // Lưu thông tin ví vào localStorage
-  const saveWalletToLocalStorage = (
-    address: string,
-    webauthnCredentialId: string,
-    publicKey: string,
-    recoveryHash: number[],
-    walletName?: string
-  ) => {
+  const saveWalletInfo = (address: string, credentials: any, name: string) => {
+    // Lưu thông tin ví
     const walletInfo = {
       address,
-      credential_id: webauthnCredentialId,
-      credentialId: webauthnCredentialId,
-      public_key: publicKey,
-      webauthnPubkey: publicKey,
-      pubkey: publicKey,
-      name: walletName || `Ví ${address.slice(0, 4)}...${address.slice(-4)}`,
-      threshold: 1,
-      recovery_hash: Buffer.from(recoveryHash).toString('hex'),
-      created_at: new Date().toISOString(),
-      last_used: new Date().toISOString()
+      credential_id: credentials.id,
+      public_key: credentials.publicKey,
+      name: name,
+      created_at: new Date().toISOString()
     };
     
-    // Lưu thông tin chi tiết ví
-    localStorage.setItem(`wallet_${address}`, JSON.stringify(walletInfo));
+    // Lưu thông tin ví hiện tại vào localStorage
+    localStorage.setItem('walletInfo', JSON.stringify(walletInfo));
     
-    // Cập nhật danh sách ví
-    let walletList: Array<{address: string, name?: string, created_at: string}> = [];
+    // Lưu vào danh sách ví
+    let walletList = [];
     const walletListStr = localStorage.getItem('walletList');
     if (walletListStr) {
       try {
@@ -196,21 +186,21 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ onWalletCreated })
       }
     }
     
-    // Thêm ví mới vào danh sách nếu chưa có
-    if (!walletList.some(w => w.address === address)) {
-      walletList.push({
-        address,
-        name: walletInfo.name,
-        created_at: walletInfo.created_at
-      });
-      localStorage.setItem('walletList', JSON.stringify(walletList));
+    // Kiểm tra xem ví đã tồn tại trong danh sách chưa
+    const existingWalletIndex = walletList.findIndex((w: any) => w.address === address);
+    if (existingWalletIndex >= 0) {
+      // Cập nhật ví hiện tại
+      walletList[existingWalletIndex] = walletInfo;
+    } else {
+      // Thêm ví mới vào danh sách
+      walletList.push(walletInfo);
     }
     
-    // Lưu ví hiện tại
-    localStorage.setItem('currentWallet', address);
-    localStorage.setItem('walletInfo', JSON.stringify(walletInfo));
+    // Lưu danh sách ví cập nhật
+    localStorage.setItem('walletList', JSON.stringify(walletList));
     
-    console.log("Đã lưu thông tin ví vào localStorage:", walletInfo);
+    // Trả về địa chỉ ví
+    return address;
   };
 
   // Khởi tạo ví trên blockchain
