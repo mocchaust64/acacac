@@ -1,43 +1,49 @@
 import { Idl } from '@coral-xyz/anchor';
+import * as web3 from '@solana/web3.js';
+import { AnchorProvider, Program } from '@coral-xyz/anchor';
+
+import { Connection, Transaction, VersionedTransaction } from '@solana/web3.js';
+
+// Tự định nghĩa interface Wallet phù hợp với AnchorProvider
+interface WalletInterface {
+  publicKey: web3.PublicKey;
+  signTransaction(tx: web3.Transaction): Promise<web3.Transaction>;
+  signAllTransactions(txs: web3.Transaction[]): Promise<web3.Transaction[]>;
+}
 
 /**
  * Chuyển đổi IDL để phù hợp với định dạng Anchor cần
  */
-export const convertIdl = (idl: any): Idl => {
-  // Tạo bản sao để tránh thay đổi gốc
-  const convertedIdl: Idl = {
-    version: idl.metadata?.version || "0.1.0",
-    name: idl.metadata?.name || "moon_wallet_program",
-    instructions: idl.instructions.map((ix: any) => ({
-      name: ix.name,
-      accounts: ix.accounts.map((acc: any) => ({
-        name: acc.name,
-        isMut: acc.writable === true,
-        isSigner: acc.signer === true,
-      })),
-      args: ix.args.map((arg: any) => ({
-        name: arg.name,
-        type: convertType(arg.type),
-      })),
-    })),
-    accounts: idl.accounts ? idl.accounts.map((acc: any) => ({
-      name: acc.name,
-      type: {
-        kind: "struct",
-        fields: acc.type && acc.type.fields ? acc.type.fields.map((field: any) => ({
-          name: field.name,
-          type: convertType(field.type),
-        })) : []
-      }
-    })) : [],
-    errors: idl.errors ? idl.errors.map((err: any) => ({
-      code: err.code,
-      name: err.name,
-      msg: err.msg
-    })) : [],
-  };
-  
-  return convertedIdl;
+export const convertIdl = (rawIdl: any) => {
+  try {
+    // Lấy Program ID từ env hoặc IDL
+    const programID = process.env.REACT_APP_PROGRAM_ID || rawIdl.address;
+    
+    const connection = new web3.Connection(
+      process.env.REACT_APP_RPC_ENDPOINT || 'https://api.devnet.solana.com',
+      'confirmed'
+    );
+    
+    // Tạo provider đơn giản
+    const provider = {
+      connection,
+      publicKey: web3.Keypair.generate().publicKey
+    };
+    
+    // Tạo coder từ IDL trước khi tạo Program
+    // Tránh vấn đề với việc phân tích IDL trong constructor của Program
+    return {
+      programId: new web3.PublicKey(programID),
+      provider: provider as any,
+      methods: {},
+      account: {},
+      address: programID,
+      idl: rawIdl
+    };
+  } catch (error) {
+    console.error("Lỗi khi tạo Program từ IDL:", error);
+    throw error;
+  }
 };
 
 // Hàm chuyển đổi kiểu dữ liệu

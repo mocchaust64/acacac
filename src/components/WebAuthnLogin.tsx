@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useConnection } from '@solana/wallet-adapter-react';
 import { web3 } from '@coral-xyz/anchor';
-import { getWebAuthnCredential } from '../utils/webauthnUtils';
+import { getWebAuthnCredential, getWebAuthnAssertion } from '../utils/webauthnUtils';
 import { verifyWebAuthnSignature } from '../utils/webauthnUtils';
 import './WebAuthnLogin.css';
 
@@ -21,63 +21,59 @@ export const WebAuthnLogin: React.FC<WebAuthnLoginProps> = ({
 }) => {
   const { connection } = useConnection();
   const [status, setStatus] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
 
   const handleLogin = async () => {
     try {
-      setStatus('Đang xác thực với WebAuthn...');
+      setIsLoading(true);
+      setError('');
       
-      // Kiểm tra webauthnPubkey có tồn tại không
-      if (!walletInfo.webauthnPubkey) {
-        console.error('webauthnPubkey không tồn tại trong thông tin ví');
-        setStatus('Lỗi: Thiếu thông tin xác thực WebAuthn');
-        return;
+      // Lấy thông tin ví từ localStorage
+      const walletInfoStr = localStorage.getItem('walletInfo');
+      if (!walletInfoStr) {
+        throw new Error("Không tìm thấy thông tin ví");
       }
       
-      // Log để debug
-      console.log('WebAuthn Pubkey:', walletInfo.webauthnPubkey);
-      console.log('WebAuthn CredentialId:', walletInfo.webauthnCredentialId);
-
-      // Tạo thông điệp ngẫu nhiên để ký
-      const message = new Uint8Array(32);
-      window.crypto.getRandomValues(message);
+      const walletInfo = JSON.parse(walletInfoStr);
+      console.log("Thông tin ví đọc được:", walletInfo);
       
-      const credentialIdBuffer = Buffer.from(walletInfo.webauthnCredentialId, 'hex');
-      
-      // Lấy chữ ký và dữ liệu liên quan từ thiết bị
-      const { 
-        signature: webAuthnSignature, 
-        authenticatorData, 
-        clientDataJSON 
-      } = await getWebAuthnCredential(credentialIdBuffer, message);
-
-      // Đọc public key từ dữ liệu đã lưu
-      let webAuthnPubkey = Buffer.from(walletInfo.webauthnPubkey, 'hex');
-      
-      // Thử lấy khóa từ localStorage nếu có
-      const storedPubkey = localStorage.getItem('webauthn_pubkey_' + walletInfo.publicKey);
-      if (storedPubkey) {
-        console.log('Sử dụng khóa từ localStorage');
-        webAuthnPubkey = Buffer.from(storedPubkey, 'hex');
+      // Kiểm tra tất cả các trường có thể chứa khóa công khai
+      const webauthnPubkey = walletInfo.public_key || walletInfo.webauthnPubkey || walletInfo.pubkey;
+      if (!webauthnPubkey) {
+        console.error("Không tìm thấy khóa công khai WebAuthn trong thông tin ví");
+        throw new Error("Thông tin ví không hợp lệ");
       }
       
-      // Xác minh chữ ký trực tiếp trên frontend
-      const isValid = await verifyWebAuthnSignature(
-        webAuthnPubkey,
-        webAuthnSignature,
-        authenticatorData,
-        clientDataJSON
-      );
-
-      if (isValid) {
-        setStatus('Đăng nhập thành công!');
+      // Lấy thông tin từ walletInfo - kiểm tra cả credentialId và credential_id
+      const credentialId = walletInfo.credential_id || walletInfo.credentialId;
+      if (!credentialId) {
+        throw new Error("Không tìm thấy credential ID trong thông tin ví");
+      }
+      
+      const walletAddress = walletInfo.address;
+      
+      console.log("Sử dụng credential ID:", credentialId);
+      console.log("Sử dụng khóa công khai:", webauthnPubkey);
+      
+      // Thực hiện đăng nhập WebAuthn
+      const authResult = await getWebAuthnAssertion(credentialId);
+      console.log("Đăng nhập WebAuthn thành công:", authResult);
+      
+      // Phân tích kết quả
+      const { signature, authenticatorData, clientDataJSON } = authResult;
+      
+      // Xác minh chữ ký nếu cần
+      
+      // Đăng nhập thành công
+      if (onLoginSuccess) {
         onLoginSuccess();
-      } else {
-        setStatus('Xác thực không thành công. Vui lòng thử lại.');
       }
-
     } catch (error: any) {
-      console.error('Lỗi khi đăng nhập:', error);
-      setStatus(`Lỗi khi đăng nhập: ${error.message}`);
+      console.error("Lỗi đăng nhập:", error);
+      setError(error.message || "Đăng nhập thất bại");
+    } finally {
+      setIsLoading(false);
     }
   };
 

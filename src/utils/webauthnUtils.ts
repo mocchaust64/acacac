@@ -4,68 +4,73 @@ import * as CBOR from 'cbor-web';
 /**
  * Tạo WebAuthn credential mới
  */
-export const createNewWebAuthnCredential = async (): Promise<{
-  publicKeyHex: string;
-  credentialIdHex: string;
-}> => {
-  // Tạo challenge ngẫu nhiên
-  const challenge = new Uint8Array(32);
-  window.crypto.getRandomValues(challenge);
-  
-  // Tạo thông tin người dùng
-  const userID = new Uint8Array(16);
-  window.crypto.getRandomValues(userID);
-  
-  // Tạo PublicKeyCredentialCreationOptions
-  const publicKeyCredentialCreationOptions: PublicKeyCredentialCreationOptions = {
-    challenge,
-    rp: {
-      name: 'Moon Wallet',
-      id: window.location.hostname
-    },
-    user: {
-      id: userID,
-      name: `user_${Date.now()}`,
-      displayName: 'Moon Wallet User'
-    },
-    pubKeyCredParams: [
-      { type: 'public-key', alg: -7 }, // ES256 (secp256r1)
-    ],
-    authenticatorSelection: {
-      authenticatorAttachment: 'platform',
-      userVerification: 'required',
-      requireResidentKey: true
-    },
-    timeout: 60000,
-    attestation: 'direct'
-  };
-  
-  // Tạo credential mới
-  const credential = await navigator.credentials.create({
-    publicKey: publicKeyCredentialCreationOptions
-  }) as PublicKeyCredential;
-  
-  // Lấy thông tin từ credential
-  const response = credential.response as AuthenticatorAttestationResponse;
-  
-  // Trích xuất publicKey từ attestationObject
-  const attestationObject = CBOR.decode(new Uint8Array(response.attestationObject));
-  const authData = attestationObject.authData;
-  
-  // Lấy public key từ authenticator data
-  // Public key bắt đầu từ vị trí 55 (sau RP ID hash, flags, counter)
-  const publicKeyBytes = extractPublicKeyFromAuthData(new Uint8Array(authData));
-  
-  const credentialIdBytes = new Uint8Array(credential.rawId);
-  
-  // Chuyển đổi sang hex để lưu trữ
-  const publicKeyHex = bufferToHex(publicKeyBytes.buffer);
-  const credentialIdHex = bufferToHex(credentialIdBytes.buffer);
-  
-  console.log("Extracted public key (hex):", publicKeyHex);
-  console.log("Credential ID (hex):", credentialIdHex);
-  
-  return { publicKeyHex, credentialIdHex };
+export const createWebAuthnCredential = async (
+  walletAddress: string,
+  walletName?: string
+): Promise<{credentialId: string, publicKey: string}> => {
+  try {
+    // Tạo tên credential dễ đọc
+    const displayName = walletName || `Ví Solana ${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`;
+    const username = `${displayName} (${new Date().toLocaleDateString()})`;
+    
+    // Challenge ngẫu nhiên
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+    
+    // Cấu hình đăng ký
+    const publicKeyCredentialCreationOptions: PublicKeyCredentialCreationOptions = {
+      challenge: challenge,
+      rp: {
+        name: "Moon Wallet",
+        id: window.location.hostname,
+      },
+      user: {
+        id: new TextEncoder().encode(walletAddress),
+        name: username,
+        displayName: displayName,
+      },
+      pubKeyCredParams: [
+        { type: 'public-key', alg: -7 }, // ES256 (secp256r1)
+      ],
+      authenticatorSelection: {
+        authenticatorAttachment: 'platform',
+        userVerification: 'required',
+        requireResidentKey: true
+      },
+      timeout: 60000,
+      attestation: 'direct'
+    };
+    
+    // Tạo credential mới
+    const credential = await navigator.credentials.create({
+      publicKey: publicKeyCredentialCreationOptions
+    }) as PublicKeyCredential;
+    
+    // Lấy thông tin từ credential
+    const response = credential.response as AuthenticatorAttestationResponse;
+    
+    // Trích xuất publicKey từ attestationObject
+    const attestationObject = CBOR.decode(new Uint8Array(response.attestationObject));
+    const authData = attestationObject.authData;
+    
+    // Lấy public key từ authenticator data
+    // Public key bắt đầu từ vị trí 55 (sau RP ID hash, flags, counter)
+    const publicKeyBytes = extractPublicKeyFromAuthData(new Uint8Array(authData));
+    
+    const credentialIdBytes = new Uint8Array(credential.rawId);
+    
+    // Chuyển đổi sang hex để lưu trữ
+    const publicKeyHex = bufferToHex(publicKeyBytes);
+    const credentialIdHex = bufferToHex(credentialIdBytes.buffer);
+    
+    console.log("Extracted public key (hex):", publicKeyHex);
+    console.log("Credential ID (hex):", credentialIdHex);
+    
+    return { credentialId: credentialIdHex, publicKey: publicKeyHex };
+  } catch (error) {
+    console.error('Lỗi khi tạo WebAuthn credential:', error);
+    throw error;
+  }
 };
 
 /**
@@ -442,5 +447,55 @@ export const validatePublicKey = (publicKeyHex: string): boolean => {
   } catch (error) {
     console.error("Lỗi khi xác thực public key:", error);
     return false;
+  }
+};
+
+// Hàm để lấy WebAuthn assertion (xác thực đăng nhập)
+export const getWebAuthnAssertion = async (credentialId: string) => {
+  try {
+    // Chuyển đổi credentialId từ hex sang Uint8Array
+    const credentialIdBuffer = new Uint8Array(Buffer.from(credentialId, 'hex'));
+    
+    // Tạo challenge ngẫu nhiên
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+    
+    // Tạo options cho navigator.credentials.get
+    const publicKeyCredentialRequestOptions: PublicKeyCredentialRequestOptions = {
+      challenge: challenge,
+      allowCredentials: [{
+        id: credentialIdBuffer,
+        type: 'public-key',
+        transports: ['internal']
+      }],
+      timeout: 60000, // Timeout 60s
+      userVerification: 'preferred',
+    };
+    
+    // Yêu cầu xác thực từ WebAuthn
+    const assertion = await navigator.credentials.get({
+      publicKey: publicKeyCredentialRequestOptions
+    }) as PublicKeyCredential;
+    
+    // Kiểm tra kết quả và xử lý
+    if (!assertion || !assertion.response) {
+      throw new Error('Không thể lấy chữ ký WebAuthn');
+    }
+    
+    const response = assertion.response as AuthenticatorAssertionResponse;
+    
+    // Chuyển đổi các ArrayBuffer thành chuỗi hex hoặc Base64 để dễ xử lý
+    const signature = Buffer.from(response.signature).toString('hex');
+    const authenticatorData = Buffer.from(response.authenticatorData).toString('hex');
+    const clientDataJSON = Buffer.from(response.clientDataJSON).toString();
+    
+    return {
+      signature,
+      authenticatorData,
+      clientDataJSON: JSON.parse(clientDataJSON)
+    };
+  } catch (error) {
+    console.error('Lỗi khi lấy WebAuthn assertion:', error);
+    throw error;
   }
 };
