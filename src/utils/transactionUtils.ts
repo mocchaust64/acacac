@@ -1,15 +1,10 @@
 import { web3, BN } from '@coral-xyz/anchor';
 import { PublicKey, Transaction, Keypair, SystemProgram, TransactionInstruction } from '@solana/web3.js';
-import { utils } from '@coral-xyz/anchor';
 import { Buffer } from 'buffer';
 import idlFile from '../idl/moon_wallet_program.json';
-import { Program } from '@coral-xyz/anchor';
-import { getProvider } from '../config/provider';
-import { connection } from '../config/solana';
-import * as borsh from '@coral-xyz/borsh';
 
 // Export programID để có thể import được từ các file khác
-export const programID = new PublicKey('8z1cp83P8qTvmQzrF6PJfjq565MnKcpKkk2EUe4g574C');
+export const programID = new PublicKey('HN8JJdo8c9iLQPzbTqjoioW61BDgyevHaGkCPSYLuDy');
 
 // Lấy discriminator từ IDL mới
 function getDiscriminatorFromIdl(instructionName: string): Buffer {
@@ -45,13 +40,9 @@ export const createInitializeMultisigTx = async (
       throw new Error("Recovery hash phải đúng 32 bytes");
     }
     
-    // Tạo dữ liệu cho instruction
-    // Format: [discriminator(8)][threshold(1)][recovery_hash(32)][credential_id_len(4)][credential_id(n)]
-    
-    // Tạo buffer cho threshold
     const thresholdBuffer = Buffer.from([threshold]);
     
-    // Tạo buffer cho recovery hash
+    
     const recoveryHashBuffer = Buffer.from(recoveryHash);
     
     // Tạo buffer cho độ dài credential ID

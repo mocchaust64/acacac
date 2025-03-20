@@ -1,5 +1,5 @@
 {
-  "address": "8z1cp83P8qTvmQzrF6PJfjq565MnKcpKkk2EUe4g574C",
+  "address": "HN8JJdo8c9iLQPzbTqjoioW61BDgyevHaGkCPSYLuDy",
   "metadata": {
     "name": "moon_wallet_program",
     "version": "0.1.0",
@@ -40,7 +40,8 @@
               },
               {
                 "kind": "account",
-                "path": "owner"
+                "path": "multisig.credential_id",
+                "account": "MultiSigWallet"
               }
             ]
           }
@@ -326,7 +327,8 @@
               },
               {
                 "kind": "account",
-                "path": "owner"
+                "path": "multisig.credential_id",
+                "account": "MultiSigWallet"
               }
             ]
           }
@@ -408,7 +410,8 @@
               },
               {
                 "kind": "account",
-                "path": "owner"
+                "path": "multisig.credential_id",
+                "account": "MultiSigWallet"
               }
             ]
           }
@@ -557,7 +560,8 @@
               },
               {
                 "kind": "account",
-                "path": "owner"
+                "path": "multisig.credential_id",
+                "account": "MultiSigWallet"
               }
             ]
           }
@@ -687,7 +691,7 @@
     {
       "code": 6007,
       "name": "NameTooLong",
-      "msg": "Tên ví không được vượt quá 32 ký tự"
+      "msg": "Tên guardian không được vượt quá 16 ký tự"
     },
     {
       "code": 6008,
