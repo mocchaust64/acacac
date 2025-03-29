@@ -625,3 +625,85 @@ function saveCredentialInfo(
     console.error("Lỗi khi xử lý thông tin credential:", error);
   }
 };
+
+/**
+ * Xác thực để đăng nhập bằng WebAuthn với credential ID đã biết
+ */
+export const getWebAuthnAssertionForLogin = async (
+  credentialIdBase64: string,
+  allowEmpty: boolean = false
+): Promise<{
+  success: boolean;
+  rawId?: Uint8Array;
+  error?: string;
+}> => {
+  try {
+    if (!isWebAuthnSupported()) {
+      throw new Error('WebAuthn không được hỗ trợ trên trình duyệt này');
+    }
+
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+
+    // Tạo options cho get assertion
+    const options: PublicKeyCredentialRequestOptions = {
+      challenge: challenge,
+      timeout: 60000,
+      userVerification: 'preferred',
+    };
+
+    // Nếu có credential ID, thêm vào allowCredentials
+    if (credentialIdBase64) {
+      const credentialIdBuffer = new Uint8Array(Buffer.from(credentialIdBase64, 'base64'));
+      console.log("Đang đăng nhập với credential ID:", credentialIdBase64);
+      options.allowCredentials = [{
+        id: credentialIdBuffer,
+        type: 'public-key',
+      }];
+    } else if (!allowEmpty) {
+      throw new Error('Credential ID không được cung cấp');
+    }
+
+    // Nếu không có credential ID và allowEmpty = true, 
+    // có thể trình duyệt sẽ hiển thị tất cả credentials có sẵn
+
+    console.log("Đang yêu cầu xác thực WebAuthn với options:", options);
+    
+    const assertion = await navigator.credentials.get({
+      publicKey: options
+    }) as PublicKeyCredential;
+
+    if (!assertion) {
+      throw new Error('Không thể lấy thông tin xác thực WebAuthn');
+    }
+
+    console.log("Xác thực WebAuthn thành công:", assertion);
+    
+    return {
+      success: true,
+      rawId: new Uint8Array(assertion.rawId)
+    };
+  } catch (error: any) {
+    console.error('Lỗi khi xác thực WebAuthn:', error);
+    return {
+      success: false,
+      error: error.message || 'Không thể xác thực'
+    };
+  }
+};
+
+/**
+ * Lấy thông tin Multisig PDA dựa trên credential ID
+ */
+export const calculateMultisigAddress = (
+  programId: any, 
+  credentialId: string
+): [any, number] => {
+  return programId.findProgramAddressSync(
+    [
+      Buffer.from("multisig"),
+      Buffer.from(credentialId)
+    ],
+    programId
+  );
+};

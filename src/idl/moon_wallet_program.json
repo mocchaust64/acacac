@@ -42,8 +42,8 @@
       ],
       "args": [
         {
-          "name": "guardian_pubkey",
-          "type": "pubkey"
+          "name": "guardian_id",
+          "type": "u64"
         },
         {
           "name": "guardian_name",
@@ -105,6 +105,10 @@
         {
           "name": "threshold",
           "type": "u8"
+        },
+        {
+          "name": "credential_id",
+          "type": "string"
         }
       ]
     },
@@ -150,6 +154,14 @@
         }
       ],
       "args": [
+        {
+          "name": "_old_guardian_id",
+          "type": "u64"
+        },
+        {
+          "name": "_new_guardian_id",
+          "type": "u64"
+        },
         {
           "name": "recovery_hash_intermediate",
           "type": {
@@ -209,7 +221,16 @@
           "name": "system_program"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "_guardian_id",
+          "type": "u64"
+        },
+        {
+          "name": "_owner_guardian_id",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "update_guardian_status",
@@ -247,6 +268,14 @@
         }
       ],
       "args": [
+        {
+          "name": "_guardian_id",
+          "type": "u64"
+        },
+        {
+          "name": "_owner_guardian_id",
+          "type": "u64"
+        },
         {
           "name": "is_active",
           "type": "bool"
@@ -506,7 +535,7 @@
           },
           {
             "name": "guardian_id",
-            "type": "pubkey"
+            "type": "u64"
           },
           {
             "name": "name",
@@ -575,6 +604,14 @@
           {
             "name": "last_transaction_timestamp",
             "type": "i64"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "credential_id",
+            "type": "string"
           }
         ]
       }

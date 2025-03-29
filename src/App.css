@@ -3,41 +3,42 @@
 }
 
 .App-header {
-  background-color: #282c34;
+  background-color: #f8f9fa;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  color: white;
+  color: #333;
   padding: 20px;
 }
 
 h1 {
   margin-bottom: 30px;
-  color: #61dafb;
+  color: #0066cc;
 }
 
 h2 {
   margin-top: 20px;
   margin-bottom: 15px;
-  color: #61dafb;
+  color: #0066cc;
 }
 
 .wallet-info, .wallet-actions, .guardian-actions, .transaction-status {
   width: 80%;
   max-width: 800px;
-  background-color: #373b44;
+  background-color: #ffffff;
   border-radius: 10px;
   padding: 20px;
   margin-bottom: 20px;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e0e0e0;
 }
 
 button {
-  background-color: #61dafb;
+  background-color: #0066cc;
   border: none;
-  color: #282c34;
+  color: white;
   padding: 10px 20px;
   margin: 5px;
   border-radius: 5px;
@@ -47,7 +48,7 @@ button {
 }
 
 button:hover {
-  background-color: #4fa8d1;
+  background-color: #0052a3;
   transform: scale(1.05);
 }
 
@@ -55,7 +56,7 @@ input {
   padding: 10px;
   margin: 10px;
   border-radius: 5px;
-  border: none;
+  border: 1px solid #ccc;
   width: 300px;
 }
 
@@ -67,16 +68,29 @@ label {
   white-space: pre-line;
   text-align: left;
   padding: 10px;
-  background-color: #1e2127;
+  background-color: #f5f5f5;
   border-radius: 5px;
   overflow-wrap: break-word;
+  color: #333;
+}
+
+.connection-info {
+  width: 80%;
+  max-width: 800px;
+  background-color: #ffffff;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e0e0e0;
 }
 
 .button-row {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  margin: 10px 0;
+  align-items: center;
+  margin-top: 15px;
 }
 
 pre {
@@ -131,14 +145,15 @@ pre {
   }
 }
 
-.create-wallet-section {
-  border: 1px solid #ddd;
+.create-wallet-section, .add-guardian-section {
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   padding: 20px;
   margin: 20px 0;
-  background-color: #f8f9fa;
+  background-color: #ffffff;
   width: 100%;
-  max-width: 600px;
+  max-width: 800px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .input-group {
@@ -177,8 +192,8 @@ pre {
   margin-top: 10px;
 }
 
-.create-wallet-button {
-  background-color: #4CAF50;
+.create-wallet-button, .add-guardian-button {
+  background-color: #0066cc;
   color: white;
   padding: 10px 20px;
   border: none;
@@ -188,31 +203,205 @@ pre {
   margin-top: 10px;
 }
 
-.create-wallet-button:disabled {
+.create-wallet-button:hover, .add-guardian-button:hover {
+  background-color: #0052a3;
+}
+
+.create-wallet-button:disabled, .add-guardian-button:disabled {
   background-color: #cccccc;
   cursor: not-allowed;
 }
 
-.credential-info {
-  margin-top: 15px;
-  padding: 10px;
-  background-color: #e9f7ef;
-  border-radius: 4px;
+.guardian-form {
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 10px;
+}
+
+.guardian-form .error-message {
+  margin-left: 0;
+  margin-top: 5px;
+}
+
+.toggle-button {
+  background-color: #28a745;
+  color: white;
+}
+
+.toggle-button:hover {
+  background-color: #218838;
 }
 
 .transaction-status {
   margin-top: 20px;
   padding: 15px;
-  border: 1px solid #ddd;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
-  background-color: #f5f5f5;
+  background-color: #ffffff;
   width: 100%;
-  max-width: 600px;
+  max-width: 800px;
   max-height: 300px;
   overflow-y: auto;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .transaction-status h3 {
   margin-top: 0;
-  color: #333;
+  color: #0066cc;
+}
+
+/* Thêm CSS cho info-text */
+.info-text {
+  background-color: #e8f4ff;
+  border: 1px solid #a0d2ff;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 10px 0;
+  font-size: 14px;
+  color: #0066cc;
+}
+
+.credential-info {
+  margin-top: 15px;
+  padding: 10px;
+  background-color: #e8f4ff;
+  border-radius: 4px;
+  border: 1px solid #a0d2ff;
+}
+
+.guardian-selection {
+  display: flex;
+  align-items: center;
+  margin: 10px 0;
+}
+
+.guardian-selection select {
+  background-color: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.guardian-list {
+  list-style-type: none;
+  padding: 0;
+  margin: 10px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.guardian-item {
+  background-color: #f0f8ff;
+  border: 1px solid #a0d2ff;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 14px;
+  color: #0066cc;
+}
+
+.existing-guardians {
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: #f5f9ff;
+  border-radius: 4px;
+}
+
+.guardian-actions {
+  display: flex;
+  justify-content: space-between;
+  margin: 15px 0;
+}
+
+.update-button {
+  background-color: #28a745;
+  color: white;
+}
+
+.update-button:hover {
+  background-color: #218838;
+}
+
+.info-text.warning {
+  color: #ff9800;
+  background-color: #fff8e1;
+  border-left: 4px solid #ff9800;
+  padding: 10px;
+  margin: 10px 0;
+  border-radius: 4px;
+}
+
+.login-section {
+  width: 80%;
+  max-width: 800px;
+  background-color: #ffffff;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e0e0e0;
+}
+
+.wallet-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  margin-top: 15px;
+  margin-bottom: 15px;
+}
+
+.wallet-actions button {
+  flex: 1;
+  padding: 12px;
+  font-size: 16px;
+}
+
+.login-form {
+  border-top: 1px solid #e0e0e0;
+  padding-top: 20px;
+  margin-top: 20px;
+}
+
+.btn-primary {
+  background-color: #0066cc;
+  border-color: #0066cc;
+}
+
+.btn-success {
+  background-color: #28a745;
+  border-color: #28a745;
+}
+
+.mt-3 {
+  margin-top: 1rem;
+}
+
+.card {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+  padding: 15px;
+}
+
+.card-body {
+  padding: 20px;
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  font-size: 16px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
 }
