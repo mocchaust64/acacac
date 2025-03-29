@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Connection, PublicKey, Keypair, Transaction, SystemProgram, TransactionInstruction, Commitment, Signer, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { Buffer } from 'buffer';
 import './App.css';
-import { createWebAuthnCredential, getWebAuthnAssertionForLogin, calculateMultisigAddress } from './utils/webauthnUtils';
+import { createWebAuthnCredential, getWebAuthnAssertionForLogin, calculateMultisigAddress, getWebAuthnAssertion } from './utils/webauthnUtils';
 
 // Lấy các biến môi trường hoặc sử dụng giá trị mặc định
 const RPC_ENDPOINT = process.env.REACT_APP_RPC_ENDPOINT || 'http://127.0.0.1:8899'; // Localhost validator
@@ -84,14 +84,10 @@ const bigIntToLeBytes = (value: bigint, bytesLength: number = 8): Uint8Array => 
 
 // Helper function để tính toán MultisigPDA một cách nhất quán
 const calculateMultisigPDA = (programId: PublicKey, credentialId: string): [PublicKey, number] => {
-  console.log("Tính PDA với credential ID (chuỗi):", credentialId);
-  
-  // QUAN TRỌNG: credential_id.as_bytes() trong Rust chuyển trực tiếp chuỗi thành bytes
-  // không giải mã base64, nên ở đây chúng ta sử dụng chuỗi trực tiếp
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from("multisig"),
-      Buffer.from(credentialId) // Sử dụng trực tiếp chuỗi làm bytes
+      Buffer.from(credentialId)
     ],
     programId
   );
@@ -342,7 +338,7 @@ function App() {
       console.log("Raw ID as base64:", rawIdBase64);
       
       // Sử dụng helper function để tính PDA một cách nhất quán
-      const [pda, bump] = calculateMultisigPDA(PROGRAM_ID, rawIdBase64);
+      const [pda, bump] = calculateMultisigAddress(PROGRAM_ID, rawIdBase64);
       console.log("PDA with credential ID:", pda.toString(), "bump:", bump);
       
       setMultisigAddress(pda);
@@ -588,7 +584,7 @@ function App() {
     console.log("findMultisigAddress - credential ID:", credentialId);
     
     // Sử dụng helper function để tính PDA một cách nhất quán
-    const [pda, bump] = calculateMultisigPDA(PROGRAM_ID, credentialId);
+    const [pda, bump] = calculateMultisigAddress(PROGRAM_ID, credentialId);
     console.log("findMultisigAddress - PDA:", pda.toString(), "bump:", bump);
     
     setMultisigAddress(pda);
@@ -1442,53 +1438,69 @@ function App() {
   // Hàm đăng nhập vào ví đã tạo
   const loginToWallet = async () => {
     try {
-      if (!loginCredentialId) {
-        setTransactionStatus('Vui lòng nhập Credential ID để đăng nhập.');
-        return;
-      }
-      
       setIsLoggingIn(true);
-      setTransactionStatus('Đang đăng nhập vào ví...');
+      setTransactionStatus('Đang đăng nhập vào ví...\n\nBước 1: Đang yêu cầu xác thực WebAuthn...');
       
-      // 1. Yêu cầu xác thực WebAuthn với credential ID đã nhập
-      const authResult = await getWebAuthnAssertionForLogin(loginCredentialId);
-      
-      if (!authResult.success) {
-        setTransactionStatus(`Đăng nhập thất bại: ${authResult.error}`);
+      // 1. Yêu cầu người dùng xác thực với thiết bị (không cần nhập credential ID cụ thể)
+      try {
+        // Gọi hàm getWebAuthnAssertionForLogin với allowEmpty=true để cho phép người dùng chọn từ bất kỳ credential nào
+        const assertionResult = await getWebAuthnAssertionForLogin('', true);
+        
+        if (!assertionResult.success || !assertionResult.rawId) {
+          throw new Error(assertionResult.error || 'Không thể xác thực với thiết bị');
+        }
+        
+        // Lấy thông tin credential từ phản hồi
+        const credentialRawData = assertionResult.rawId;
+        
+        // Chuyển rawId thành base64 để sử dụng - giống như cách tạo ví
+        const rawIdBase64 = Buffer.from(credentialRawData).toString('base64');
+        console.log("Raw credential ID (base64):", rawIdBase64);
+        
+        setTransactionStatus(prev => prev + '\nXác thực WebAuthn thành công!\n\nBước 2: Đang tính toán địa chỉ ví...');
+        
+        // 2. Tính địa chỉ ví từ credential ID với cùng phương thức như khi tạo ví
+        // Sử dụng rawIdBase64 không được hash thêm
+        const [walletPDA, bump] = calculateMultisigPDA(PROGRAM_ID, rawIdBase64);
+        
+        console.log("PDA được tính từ credential:", rawIdBase64);
+        console.log("Địa chỉ ví:", walletPDA.toString(), "bump:", bump);
+        
+        // 3. Kiểm tra xem ví có tồn tại không
+        const walletAccount = await connection.getAccountInfo(walletPDA);
+        
+        if (!walletAccount) {
+          console.log("Thử tìm địa chỉ ví đã biết:", "2223661D9wT19eWZqAkicC6P5tAGAwkpjxMgF4EpJbwh");
+          setTransactionStatus(`Không tìm thấy ví với credential này. Có thể bạn cần tạo ví mới.`);
+          setIsLoggingIn(false);
+          return;
+        }
+        
+        setTransactionStatus(prev => prev + `\nĐã tìm thấy ví tại địa chỉ: ${walletPDA.toString()}\n\nBước 3: Đang tải thông tin ví...`);
+        
+        // 4. Cập nhật state với thông tin ví
+        setMultisigAddress(walletPDA);
+        setCredentialId(rawIdBase64); // Lưu credential ID gốc
+        
+        // 5. Tìm guardian PDA
+        await findGuardianAddress(1); // Tìm guardian chính (owner)
+        
+        // 6. Tải số dư và danh sách guardian
+        await loadPdaBalance(walletPDA);
+        await getExistingGuardianIds();
+        
+        // 7. Hoàn thành đăng nhập
+        setIsLoggedIn(true);
         setIsLoggingIn(false);
-        return;
-      }
-      
-      setTransactionStatus('Xác thực WebAuthn thành công. Đang tải thông tin ví...');
-      
-      // 2. Tính địa chỉ ví từ credential ID
-      const [walletPDA, bump] = calculateMultisigAddress(PROGRAM_ID, loginCredentialId);
-      setMultisigAddress(walletPDA);
-      setCredentialId(loginCredentialId);
-      
-      // 3. Kiểm tra xem ví có tồn tại không
-      const walletAccount = await connection.getAccountInfo(walletPDA);
-      
-      if (!walletAccount) {
-        setTransactionStatus(`Không tìm thấy ví với credential ID đã nhập. Vui lòng kiểm tra lại hoặc tạo ví mới.`);
+        setTransactionStatus(`Đăng nhập thành công!\n\nĐịa chỉ ví: ${walletPDA.toString()}\nSố guardian: ${existingGuardians.length}`);
+        
+        // 8. Ẩn form đăng nhập
+        setShowLoginForm(false);
+      } catch (webAuthnError: any) {
+        console.error("Lỗi khi xác thực WebAuthn:", webAuthnError);
+        setTransactionStatus(`Lỗi khi xác thực: ${webAuthnError.message}`);
         setIsLoggingIn(false);
-        return;
       }
-      
-      // 4. Tìm guardian PDA
-      await findGuardianAddress(1); // Tìm guardian chính (owner)
-      
-      // 5. Tải số dư và danh sách guardian
-      await loadPdaBalance(walletPDA);
-      await getExistingGuardianIds();
-      
-      // 6. Hoàn thành đăng nhập
-      setIsLoggedIn(true);
-      setIsLoggingIn(false);
-      setTransactionStatus(`Đăng nhập thành công! Đã tải ví ${walletPDA.toString()}`);
-      
-      // 7. Ẩn form đăng nhập
-      setShowLoginForm(false);
     } catch (error: any) {
       console.error('Lỗi khi đăng nhập:', error);
       setTransactionStatus(`Lỗi khi đăng nhập: ${error.message}`);
@@ -1508,10 +1520,11 @@ function App() {
             
             <div className="wallet-actions">
               <button 
-                onClick={() => setShowLoginForm(!showLoginForm)}
+                onClick={loginToWallet}
                 className="btn btn-primary"
+                disabled={isLoggingIn}
               >
-                {showLoginForm ? 'Ẩn form đăng nhập' : 'Đăng nhập vào ví đã có'}
+                {isLoggingIn ? 'Đang đăng nhập...' : 'Đăng nhập bằng WebAuthn'}
               </button>
               
               <button 
@@ -1521,36 +1534,6 @@ function App() {
                 Tạo ví mới
               </button>
             </div>
-            
-            {showLoginForm && (
-              <div className="login-form mt-3">
-                <div className="card">
-                  <div className="card-header bg-primary text-white">
-                    <h4>Đăng nhập vào ví</h4>
-                  </div>
-                  <div className="card-body">
-                    <div className="form-group mb-3">
-                      <label htmlFor="credentialId">Credential ID (Base64):</label>
-                      <input
-                        type="text"
-                        id="credentialId"
-                        className="form-control"
-                        value={loginCredentialId}
-                        onChange={(e) => setLoginCredentialId(e.target.value)}
-                        placeholder="Nhập Credential ID của ví"
-                      />
-                    </div>
-                    <button 
-                      className="btn btn-primary w-100"
-                      onClick={loginToWallet}
-                      disabled={isLoggingIn || !loginCredentialId}
-                    >
-                      {isLoggingIn ? 'Đang đăng nhập...' : 'Đăng nhập'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
         
