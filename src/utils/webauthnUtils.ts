@@ -7,7 +7,7 @@ import * as CBOR from 'cbor-web';
 export const createWebAuthnCredential = async (
   walletAddress: string,
   walletName?: string
-): Promise<{credentialId: string, publicKey: string}> => {
+): Promise<{credentialId: string, publicKey: string, rawId: Uint8Array}> => {
   try {
     if (!isWebAuthnSupported()) {
       throw new Error('WebAuthn không được hỗ trợ trên trình duyệt này');
@@ -71,6 +71,8 @@ export const createWebAuthnCredential = async (
     
     // Lấy thông tin credentialId
     const credentialId = bufferToHex(credential.rawId);
+    console.log("Raw credential ID buffer:", new Uint8Array(credential.rawId));
+    console.log("Credentials raw ID as hex:", credentialId);
     
     // Phân tích authenticatorData để lấy public key
     const authData = attestationObject.authData;
@@ -82,7 +84,8 @@ export const createWebAuthnCredential = async (
     
     return {
       credentialId,
-      publicKey
+      publicKey,
+      rawId: new Uint8Array(credential.rawId)
     };
   } catch (error) {
     console.error('Lỗi khi tạo WebAuthn credential:', error);
@@ -232,8 +235,14 @@ export const verifyWebAuthnSignature = async (
   clientDataJSON: Uint8Array
 ): Promise<boolean> => {
   try {
-    console.log('Bắt đầu xác minh chữ ký WebAuthn');
-    console.log('Pubkey ban đầu:', pubkey.toString('hex'));
+    // Kiểm tra các tham số đầu vào
+    if (!pubkey || !signature || !authenticatorData || !clientDataJSON) {
+      console.error('Thiếu tham số cần thiết cho xác minh WebAuthn');
+      return false;
+    }
+    
+    console.log("Public key length:", pubkey.length);
+    console.log("Pubkey:", pubkey.toString('hex'));
     
     // Kiểm tra độ dài khóa
     if (pubkey.length !== 65) {
@@ -241,7 +250,7 @@ export const verifyWebAuthnSignature = async (
       
       // Tạo khóa mới với độ dài đúng
       const newPubkey = Buffer.alloc(65);
-      pubkey.copy(newPubkey, 0, 0, Math.min(pubkey.length, 65));
+      copyBuffer(pubkey, newPubkey, 0, 0, Math.min(pubkey.length, 65));
       
       // Nếu byte đầu tiên không phải 0x04, sửa lại
       if (newPubkey[0] !== 0x04) {
@@ -258,7 +267,7 @@ export const verifyWebAuthnSignature = async (
       // Tạo khóa mới với byte đầu tiên là 0x04
       const newPubkey = Buffer.alloc(65);
       newPubkey[0] = 0x04;
-      pubkey.copy(newPubkey, 1, 1, 65);
+      copyBuffer(pubkey, newPubkey, 1, 1, 65);
       pubkey = newPubkey;
       console.log('Pubkey sau khi sửa byte đầu:', pubkey.toString('hex'));
     }
@@ -364,6 +373,57 @@ export const verifyWebAuthnSignature = async (
   }
 };
 
+// Hàm tiện ích để chuyển đổi Buffer sang Uint8Array phù hợp với yêu cầu
+function bufferToUint8Array(buffer: Buffer): Uint8Array {
+  // Tạo một Uint8Array mới từ Buffer để tránh các vấn đề về tương thích
+  return new Uint8Array(buffer);
+}
+
+// Sửa lại hàm copy để tránh lỗi về type
+function copyBuffer(source: Buffer, target: Buffer, targetStart = 0, sourceStart = 0, sourceEnd = source.length): void {
+  // Tạo view mới từ source buffer
+  const sourceView = new Uint8Array(source.buffer, source.byteOffset + sourceStart, Math.min(sourceEnd, source.length) - sourceStart);
+  // Tạo view mới từ target buffer
+  const targetView = new Uint8Array(target.buffer, target.byteOffset + targetStart, target.length - targetStart);
+  // Copy giữa các Uint8Array
+  targetView.set(sourceView.slice(0, Math.min(sourceView.length, targetView.length)));
+}
+
+// Hàm chuyển đổi khóa từ định dạng raw sang SPKI
+const convertRawToSPKI = (rawKey: Buffer): ArrayBuffer => {
+  try {
+    // Đảm bảo khóa bắt đầu bằng 0x04
+    if (rawKey[0] !== 0x04) {
+      console.warn('Khóa không bắt đầu bằng 0x04, đang sửa...');
+      // Tạo khóa mới với byte đầu tiên là 0x04
+      const newRawKey = Buffer.alloc(65);
+      newRawKey[0] = 0x04;
+      // Sao chép phần còn lại của khóa
+      if (rawKey.length >= 64) {
+        copyBuffer(rawKey, newRawKey, 1, 1, 65);
+      } else {
+        copyBuffer(rawKey, newRawKey, 1, 0, Math.min(rawKey.length, 64));
+      }
+      rawKey = newRawKey;
+    }
+    
+    // Tạo SPKI header
+    const spkiHeader = Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex');
+    
+    // Nối header với khóa (bỏ byte đầu tiên 0x04)
+    const rawKeySlice = new Uint8Array(rawKey.buffer, rawKey.byteOffset + 1, rawKey.length - 1);
+    const spkiBuffer = new Uint8Array(spkiHeader.length + rawKeySlice.length);
+    spkiBuffer.set(new Uint8Array(spkiHeader), 0);
+    spkiBuffer.set(rawKeySlice, spkiHeader.length);
+    
+    // Trả về ArrayBuffer
+    return spkiBuffer.buffer.slice(0); // .slice(0) đảm bảo trả về ArrayBuffer thay vì ArrayBufferLike
+  } catch (error) {
+    console.error('Lỗi khi chuyển đổi khóa:', error);
+    throw error;
+  }
+};
+
 // Hàm chuyển đổi chữ ký từ DER sang raw
 const derToRaw = (signature: Buffer): Uint8Array => {
   try {
@@ -390,53 +450,38 @@ const derToRaw = (signature: Buffer): Uint8Array => {
     let s = signature.slice(offset, offset + sLen);
     
     // Pad r and s to 32 bytes
+    let rPadded, sPadded;
+    
     if (r.length < 32) {
-      r = Buffer.concat([Buffer.alloc(32 - r.length, 0), r]);
+      const padding = Buffer.alloc(32 - r.length, 0);
+      rPadded = new Uint8Array(32);
+      rPadded.set(new Uint8Array(padding), 0);
+      rPadded.set(new Uint8Array(r), padding.length);
     } else if (r.length > 32) {
-      r = r.slice(r.length - 32);
+      rPadded = new Uint8Array(r.buffer, r.byteOffset + r.length - 32, 32);
+    } else {
+      rPadded = new Uint8Array(r);
     }
     
     if (s.length < 32) {
-      s = Buffer.concat([Buffer.alloc(32 - s.length, 0), s]);
+      const padding = Buffer.alloc(32 - s.length, 0);
+      sPadded = new Uint8Array(32);
+      sPadded.set(new Uint8Array(padding), 0);
+      sPadded.set(new Uint8Array(s), padding.length);
     } else if (s.length > 32) {
-      s = s.slice(s.length - 32);
+      sPadded = new Uint8Array(s.buffer, s.byteOffset + s.length - 32, 32);
+    } else {
+      sPadded = new Uint8Array(s);
     }
     
     // Concatenate r and s
-    return Buffer.concat([r, s]);
+    const result = new Uint8Array(64);
+    result.set(rPadded, 0);
+    result.set(sPadded, 32);
+    
+    return result;
   } catch (error) {
     console.error('Lỗi khi chuyển đổi chữ ký DER sang raw:', error);
-    throw error;
-  }
-};
-
-// Hàm chuyển đổi khóa từ định dạng raw sang SPKI
-const convertRawToSPKI = (rawKey: Buffer): ArrayBuffer => {
-  try {
-    // Đảm bảo khóa bắt đầu bằng 0x04
-    if (rawKey[0] !== 0x04) {
-      console.warn('Khóa không bắt đầu bằng 0x04, đang sửa...');
-      // Tạo khóa mới với byte đầu tiên là 0x04
-      const newRawKey = Buffer.alloc(65);
-      newRawKey[0] = 0x04;
-      // Sao chép phần còn lại của khóa
-      if (rawKey.length >= 64) {
-        rawKey.copy(newRawKey, 1, 1, 65);
-      } else {
-        rawKey.copy(newRawKey, 1, 0, Math.min(rawKey.length, 64));
-      }
-      rawKey = newRawKey;
-    }
-    
-    // Tạo SPKI header
-    const spkiHeader = Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex');
-    
-    // Nối header với khóa (bỏ byte đầu tiên 0x04)
-    const spkiKey = Buffer.concat([spkiHeader, rawKey.slice(1)]);
-    
-    return spkiKey.buffer.slice(spkiKey.byteOffset, spkiKey.byteOffset + spkiKey.byteLength);
-  } catch (error) {
-    console.error('Lỗi khi chuyển đổi khóa:', error);
     throw error;
   }
 };
@@ -533,36 +578,50 @@ export const getWebAuthnAssertion = async (credentialId?: string): Promise<{
   }
 };
 
-// Hàm lưu thông tin credential với userID và tên ví
-const saveCredentialInfo = (walletAddress: string, credentialId: string, publicKey: string, userId: Uint8Array, walletName?: string) => {
+/**
+ * Lưu thông tin credential vào localStorage
+ */
+function saveCredentialInfo(
+  walletAddress: string,
+  credentialId: string,
+  publicKey: string,
+  userId: Uint8Array,
+  displayName: string
+): void {
   try {
-    // Sử dụng tên ví được cung cấp hoặc tạo tên mặc định
-    const displayName = walletName || `Ví ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
-    
-    // Lưu trữ thông tin credential để sử dụng sau này
+    // Chuẩn bị thông tin credential để lưu
     const credentialInfo = {
       walletAddress,
       credentialId,
       publicKey,
-      userId: Array.from(userId), // Chuyển Uint8Array thành Array để lưu trong JSON
-      displayName, // Thêm tên ví
+      userId: Array.from(userId), // Chuyển Uint8Array thành Array để có thể serialize
+      displayName,
       createdAt: new Date().toISOString()
     };
     
     // Lưu vào danh sách credentials
     let credentialsList = [];
-    const credentialsListStr = localStorage.getItem('webauthnCredentials');
-    if (credentialsListStr) {
-      credentialsList = JSON.parse(credentialsListStr);
+    try {
+      const credentialsListStr = localStorage.getItem('webauthnCredentials');
+      if (credentialsListStr) {
+        credentialsList = JSON.parse(credentialsListStr);
+      }
+    } catch (storageError) {
+      console.warn("Không thể đọc credentials từ localStorage:", storageError);
+      // Tiếp tục với mảng rỗng
     }
     
     // Thêm credential mới vào danh sách
     credentialsList.push(credentialInfo);
-    localStorage.setItem('webauthnCredentials', JSON.stringify(credentialsList));
     
-    console.log("Đã lưu thông tin credential mới:", credentialInfo);
-    
+    try {
+      localStorage.setItem('webauthnCredentials', JSON.stringify(credentialsList));
+      console.log("Đã lưu thông tin credential mới:", credentialInfo);
+    } catch (saveError) {
+      console.error("Không thể lưu credentials vào localStorage:", saveError);
+      // Không ngăn luồng hoạt động ngay cả khi không thể lưu
+    }
   } catch (error) {
-    console.error("Lỗi khi lưu thông tin credential:", error);
+    console.error("Lỗi khi xử lý thông tin credential:", error);
   }
 };

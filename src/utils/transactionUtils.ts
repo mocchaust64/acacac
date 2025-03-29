@@ -41,8 +41,6 @@ export const createInitializeMultisigTx = async (
     }
     
     const thresholdBuffer = Buffer.from([threshold]);
-    
-    
     const recoveryHashBuffer = Buffer.from(recoveryHash);
     
     // Tạo buffer cho độ dài credential ID
@@ -58,13 +56,12 @@ export const createInitializeMultisigTx = async (
       credentialId
     ]);
     
-    // Tạo instruction
+    // Tạo transaction instruction
     const instruction = new TransactionInstruction({
       keys: [
         { pubkey: multisigPDA, isSigner: false, isWritable: true },
-        { pubkey: ownerPubkey, isSigner: false, isWritable: false },
         { pubkey: feePayer.publicKey, isSigner: true, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }
       ],
       programId: programID,
       data
@@ -73,10 +70,32 @@ export const createInitializeMultisigTx = async (
     const tx = new Transaction().add(instruction);
     return tx;
   } catch (error) {
-    console.error("Lỗi khi tạo transaction:", error);
+    console.error("Lỗi khi tạo transaction initialize multisig:", error);
     throw error;
   }
 };
+
+// Thêm hàm compressPublicKey cho việc nén khóa công khai
+function compressPublicKey(uncompressedKey: Buffer): Buffer {
+  // Đảm bảo khóa bắt đầu với byte 0x04 (không nén)
+  if (uncompressedKey[0] !== 0x04 || uncompressedKey.length !== 65) {
+    throw new Error('Khóa không đúng định dạng không nén ECDSA');
+  }
+  
+  // Sử dụng Uint8Array để tránh lỗi type
+  const x = Buffer.from(uncompressedKey.subarray(1, 33));
+  const y = Buffer.from(uncompressedKey.subarray(33, 65));
+  
+  // Tính prefix: 0x02 nếu y chẵn, 0x03 nếu y lẻ
+  const prefix = (y[31] & 1) === 0 ? 0x02 : 0x03;
+  
+  // Tạo khóa nén: prefix (1 byte) + x (32 bytes)
+  const compressedKey = Buffer.alloc(33);
+  compressedKey[0] = prefix;
+  x.copy(compressedKey, 1);
+  
+  return compressedKey;
+}
 
 // Cập nhật hàm configure_webauthn với discriminator chính xác từ IDL
 export const createConfigureWebAuthnTx = async (
@@ -90,23 +109,35 @@ export const createConfigureWebAuthnTx = async (
       40, 149, 116, 224, 148, 48, 159, 54
     ]);
     
-    // Đảm bảo webauthnPubkey có đúng 65 bytes như yêu cầu trong IDL
-    if (webauthnPubkey.length !== 65) {
-      console.log(`Cảnh báo: Khóa công khai WebAuthn có ${webauthnPubkey.length} bytes, cần 65 bytes`);
-      // Tạo buffer 65 bytes
-      const paddedKey = Buffer.alloc(65);
-      // Sao chép dữ liệu hoặc pad nếu cần
-      webauthnPubkey.copy(paddedKey, 0, 0, Math.min(webauthnPubkey.length, 65));
-      webauthnPubkey = paddedKey;
+    // Nén khóa công khai từ 65 bytes xuống 33 bytes
+    let compressedKey: Buffer;
+    
+    if (webauthnPubkey.length === 65 && webauthnPubkey[0] === 0x04) {
+      // Khóa không nén, cần nén lại
+      compressedKey = compressPublicKey(webauthnPubkey);
+      console.log("Đã nén khóa từ 65 bytes xuống 33 bytes");
+    } else if (webauthnPubkey.length === 33 && (webauthnPubkey[0] === 0x02 || webauthnPubkey[0] === 0x03)) {
+      // Khóa đã nén, sử dụng trực tiếp
+      compressedKey = webauthnPubkey;
+      console.log("Khóa đã ở định dạng nén (33 bytes)");
+    } else {
+      console.warn(`Khóa công khai WebAuthn không đúng định dạng: ${webauthnPubkey.length} bytes`);
+      // Nếu không thể xử lý, tạo khóa giả
+      compressedKey = Buffer.alloc(33);
+      compressedKey[0] = 0x02; // Prefix cho khóa nén
+      if (webauthnPubkey.length > 0) {
+        // Sao chép dữ liệu nếu có
+        webauthnPubkey.copy(compressedKey, 1, 0, Math.min(webauthnPubkey.length, 32));
+      }
     }
     
-    console.log("Khóa công khai WebAuthn (độ dài):", webauthnPubkey.length);
-    console.log("Khóa công khai WebAuthn (hex):", webauthnPubkey.toString('hex'));
+    console.log("Khóa công khai WebAuthn (nén):", compressedKey.toString('hex'));
+    console.log("Độ dài khóa (bytes):", compressedKey.length);
     
     // Tạo dữ liệu instruction
     const data = Buffer.concat([
       discriminator,
-      webauthnPubkey
+      compressedKey
     ]);
     
     // Tạo instruction với đúng accounts theo IDL
@@ -195,4 +226,83 @@ export const createWebAuthnAuthTx = async (
   
   tx.add(instruction);
   return tx;
+};
+
+// Tạo hàm mới createAddGuardianTx
+export const createAddGuardianTx = (
+  multisigPDA: PublicKey,
+  guardianPDA: PublicKey,
+  guardianPubkey: PublicKey,
+  guardianName: string,
+  recoveryHash: Uint8Array,
+  isOwner: boolean,
+  webauthnPubkey?: Buffer
+): Transaction => {
+  try {
+    // Discriminator cho add_guardian
+    const discriminator = Buffer.from([167, 189, 170, 27, 74, 240, 201, 241]);
+    
+    // Tạo buffer cho tên guardian
+    const nameBuffer = Buffer.from(guardianName);
+    const nameLenBuffer = Buffer.alloc(4);
+    nameLenBuffer.writeUInt32LE(nameBuffer.length, 0);
+    
+    // Tạo buffer cho các tham số
+    const isOwnerByte = Buffer.from([isOwner ? 1 : 0]);
+    
+    // Tạo buffers cho instruction data
+    const dataBuffers = [
+      discriminator,
+      guardianPubkey.toBuffer(),
+      nameLenBuffer,
+      nameBuffer,
+      Buffer.from(recoveryHash)
+    ];
+    
+    // Thêm isOwner
+    dataBuffers.push(isOwnerByte);
+    
+    // Xử lý webauthn_pubkey (option)
+    if (webauthnPubkey && isOwner) {
+      // Some variant (1)
+      dataBuffers.push(Buffer.from([1]));
+      
+      // Nén khóa công khai nếu cần
+      let compressedKey: Buffer;
+      if (webauthnPubkey.length === 65 && webauthnPubkey[0] === 0x04) {
+        // Khóa không nén, cần nén lại
+        compressedKey = compressPublicKey(webauthnPubkey);
+      } else if (webauthnPubkey.length === 33 && (webauthnPubkey[0] === 0x02 || webauthnPubkey[0] === 0x03)) {
+        // Khóa đã nén, sử dụng trực tiếp
+        compressedKey = webauthnPubkey;
+      } else {
+        throw new Error(`Khóa công khai WebAuthn không đúng định dạng: ${webauthnPubkey.length} bytes`);
+      }
+      
+      dataBuffers.push(compressedKey);
+    } else {
+      // None variant (0)
+      dataBuffers.push(Buffer.from([0]));
+    }
+    
+    // Nối tất cả buffer lại với nhau
+    const data = Buffer.concat(dataBuffers);
+    
+    // Tạo instruction
+    const instruction = new TransactionInstruction({
+      keys: [
+        { pubkey: multisigPDA, isSigner: false, isWritable: true },
+        { pubkey: guardianPDA, isSigner: false, isWritable: true },
+        { pubkey: guardianPubkey, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }
+      ],
+      programId: programID,
+      data
+    });
+    
+    return new Transaction().add(instruction);
+  } catch (error) {
+    console.error("Lỗi khi tạo transaction add guardian:", error);
+    throw error;
+  }
 };

@@ -11,13 +11,15 @@ import {
   programID, 
   createInitializeMultisigTx, 
   createConfigureWebAuthnTx,
-  createStorePasswordHashTx 
+  createStorePasswordHashTx,
+  createAddGuardianTx
 } from '../utils/transactionUtils';
 import { 
   createWebAuthnCredential, 
   getWebAuthnCredential,
   isWebAuthnSupported 
 } from '../utils/webauthnUtils';
+import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 
 // Chuyển đổi IDL một lần
 const idl = convertIdl(idlFile);
@@ -41,23 +43,33 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ onWalletCreated })
   const [multisigPDA, setMultisigPDA] = useState<web3PublicKey | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
   
-  // Khởi tạo fee payer từ biến môi trường
-  const feePayerKeypair = useMemo(() => {
-    const feePayerSecretKeyStr = process.env.REACT_APP_FEE_PAYER_SECRET_KEY;
-    
-    if (!feePayerSecretKeyStr) {
-      console.error('Không tìm thấy REACT_APP_FEE_PAYER_SECRET_KEY trong env');
-      return null;
-    }
+  // Khởi tạo keypair cho feePayer (cần kiểm tra tính hợp lệ)
+  const [feePayerKeypair, setFeePayerKeypair] = useState<Keypair | null>(null);
 
-    try {
-      const secretKey = feePayerSecretKeyStr.split(',').map(num => parseInt(num.trim()));
-      return Keypair.fromSecretKey(new Uint8Array(secretKey));
-    } catch (error) {
-      console.error('Lỗi khi tạo fee payer keypair:', error);
-      return null;
+  // Khởi tạo fee payer từ đầu component
+  useEffect(() => {
+    // Tạo keypair mới nếu chưa có
+    if (!feePayerKeypair) {
+      const keypair = Keypair.generate();
+      setFeePayerKeypair(keypair);
+      
+      // Xin airdrop SOL để trả phí giao dịch
+      const requestAirdrop = async () => {
+        try {
+          const airdropSignature = await connection.requestAirdrop(
+            keypair.publicKey,
+            LAMPORTS_PER_SOL * 1 // 1 SOL
+          );
+          await connection.confirmTransaction(airdropSignature);
+          console.log("Đã nhận SOL airdrop:", keypair.publicKey.toBase58());
+        } catch (error) {
+          console.error("Lỗi khi xin airdrop:", error);
+        }
+      };
+      
+      requestAirdrop();
     }
-  }, []);
+  }, [connection, feePayerKeypair]);
 
   // Bước 1: Tạo WebAuthn credential
   const handleCreateCredential = async () => {
@@ -101,61 +113,112 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ onWalletCreated })
   };
 
   // Bước 2: Hoàn tất tạo ví với recovery key
-  const completeWalletCreation = async () => {
-    setIsCreating(true);
-    setErrorMsg('');
-    
+  const createWallet = async () => {
     try {
-      // Kiểm tra xem đã nhập recovery key chưa
-      if (!recoveryKey) {
-        setErrorMsg("Vui lòng nhập recovery key");
-        setIsCreating(false);
+      setIsCreating(true);
+      setErrorMsg('');
+      
+      if (!webauthnCredentialId || !webauthnPubkey || !recoveryKey) {
+        setErrorMsg('Thiếu thông tin cần thiết để tạo ví');
         return;
       }
       
-      // Tạo recovery hash từ key
-      const encoder = new TextEncoder();
-      const data = encoder.encode(recoveryKey);
-      const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-      const recoveryHash = new Uint8Array(hashBuffer);
-      
-      // Lấy credential ID và pubkey từ state
-      const credentialIdBytes = Buffer.from(webauthnCredentialId, 'hex');
-      const webauthnPubkeyBytes = Buffer.from(webauthnPubkey, 'hex');
-      
-      // Tạo PDA từ credential ID
-      const newMultisigPDA = derivePDA(credentialIdBytes);
-      console.log("Multisig PDA mới:", newMultisigPDA.toString());
-      
-      // Lưu thông tin ví vào localStorage
-      const walletAddress = saveWalletInfo(
-        newMultisigPDA.toString(),
-        {
-          id: webauthnCredentialId,
-          publicKey: webauthnPubkey
-        },
-        walletName
-      );
-      
-      // Khởi tạo ví trên blockchain
-      await initializeOnChain(
-        newMultisigPDA, 
-        credentialIdBytes, 
-        webauthnPubkeyBytes, 
-        recoveryHash
-      );
-      
-      // Thông báo tạo ví thành công
-      if (onWalletCreated) {
-        onWalletCreated(walletAddress);
+      // Kiểm tra keypair
+      if (!feePayerKeypair) {
+        setErrorMsg('Fee payer keypair chưa được khởi tạo, vui lòng thử lại sau');
+        return;
       }
       
-      setMultisigPDA(newMultisigPDA);
-      setSuccess(true);
-      setStep(3);
+      // Tạo buffer từ credentialId
+      const credentialIdBuffer = Buffer.from(webauthnCredentialId, 'hex');
+      
+      // Tạo recovery hash từ recovery phrase
+      const recoveryHashBytes = new Uint8Array(32);
+      const phraseBytes = new TextEncoder().encode(recoveryKey);
+      recoveryHashBytes.set(phraseBytes.slice(0, Math.min(phraseBytes.length, 32)));
+      
+      // Tạo PDA cho multisig wallet
+      const multisigPDA = derivePDA(credentialIdBuffer);
+      
+      console.log("Khởi tạo ví với PDA:", multisigPDA.toBase58());
+      console.log("Sử dụng fee payer:", feePayerKeypair.publicKey.toBase58());
+      
+      // 1. Tạo transaction khởi tạo multisig
+      const tx = await createInitializeMultisigTx(
+        1, // threshold = 1
+        multisigPDA,
+        feePayerKeypair.publicKey,
+        feePayerKeypair,
+        recoveryHashBytes,
+        credentialIdBuffer
+      );
+      
+      tx.feePayer = feePayerKeypair.publicKey;
+      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      tx.sign(feePayerKeypair);
+      
+      const signature = await connection.sendRawTransaction(tx.serialize());
+      console.log("Đã khởi tạo ví multisig, signature:", signature);
+      await connection.confirmTransaction(signature, 'confirmed');
+      
+      // 2. Tự động thêm guardian (owner)
+      // Tính PDA cho guardian
+      const [guardianPDA] = web3PublicKey.findProgramAddressSync(
+        [
+          Buffer.from('guardian'),
+          multisigPDA.toBuffer(),
+          feePayerKeypair.publicKey.toBuffer()
+        ],
+        programID
+      );
+      
+      console.log("Thêm guardian với PDA:", guardianPDA.toBase58());
+      
+      // Tạo transaction add guardian
+      const webauthnPubkeyBuffer = Buffer.from(webauthnPubkey, 'hex');
+      
+      // Tạo và gửi transaction add guardian
+      const addGuardianTx = createAddGuardianTx(
+        multisigPDA,
+        guardianPDA,
+        feePayerKeypair.publicKey,
+        walletName || "Owner",
+        recoveryHashBytes,
+        true, // is_owner = true
+        webauthnPubkeyBuffer
+      );
+      
+      addGuardianTx.feePayer = feePayerKeypair.publicKey;
+      addGuardianTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      addGuardianTx.sign(feePayerKeypair);
+      
+      const addGuardianSignature = await connection.sendRawTransaction(addGuardianTx.serialize());
+      console.log("Đã thêm guardian, signature:", addGuardianSignature);
+      await connection.confirmTransaction(addGuardianSignature, 'confirmed');
+      
+      // 3. Lưu thông tin ví
+      const walletInfo = {
+        publicKey: multisigPDA.toBase58(),
+        pda: multisigPDA.toBase58(),
+        webauthnCredentialId: webauthnCredentialId,
+        webauthnPubkey: webauthnPubkey,
+      };
+      
+      // Lưu vào localStorage
+      saveWalletInfo(multisigPDA.toBase58(), {
+        id: webauthnCredentialId,
+        publicKey: webauthnPubkey
+      }, walletName || 'My Moon Wallet');
+      
+      // Thông báo thành công
+      setStep(4); // Chuyển đến bước hoàn thành
+      
+      // Gọi callback để thông báo cho component cha
+      onWalletCreated(multisigPDA.toBase58());
+      
     } catch (error: any) {
-      console.error("Lỗi:", error);
-      setErrorMsg(error.message || "Lỗi khi tạo ví");
+      console.error("Lỗi khi tạo ví:", error);
+      setErrorMsg(error.message || "Lỗi không xác định");
     } finally {
       setIsCreating(false);
     }
@@ -173,92 +236,24 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ onWalletCreated })
     };
     
     // Lưu thông tin ví hiện tại vào localStorage
-    localStorage.setItem('walletInfo', JSON.stringify(walletInfo));
+    localStorage.setItem('currentWallet', JSON.stringify(walletInfo));
     
     // Lưu vào danh sách ví
     let walletList = [];
-    const walletListStr = localStorage.getItem('walletList');
-    if (walletListStr) {
+    const savedList = localStorage.getItem('walletList');
+    if (savedList) {
       try {
-        walletList = JSON.parse(walletListStr);
+        walletList = JSON.parse(savedList);
       } catch (e) {
-        console.error("Lỗi khi đọc danh sách ví:", e);
+        console.error('Lỗi khi parse danh sách ví:', e);
       }
     }
     
-    // Kiểm tra xem ví đã tồn tại trong danh sách chưa
-    const existingWalletIndex = walletList.findIndex((w: any) => w.address === address);
-    if (existingWalletIndex >= 0) {
-      // Cập nhật ví hiện tại
-      walletList[existingWalletIndex] = walletInfo;
-    } else {
-      // Thêm ví mới vào danh sách
+    // Thêm ví mới vào danh sách nếu chưa có
+    const exists = walletList.find((w: any) => w.address === address);
+    if (!exists) {
       walletList.push(walletInfo);
-    }
-    
-    // Lưu danh sách ví cập nhật
-    localStorage.setItem('walletList', JSON.stringify(walletList));
-    
-    // Trả về địa chỉ ví
-    return address;
-  };
-
-  // Khởi tạo ví trên blockchain
-  const initializeOnChain = async (
-    multisigPDA: web3PublicKey,
-    credentialId: Buffer,
-    webauthnPubkey: Buffer,
-    recoveryHash: Uint8Array
-  ) => {
-    // Kiểm tra feePayerKeypair có tồn tại không
-    if (!feePayerKeypair) {
-      throw new Error("Fee payer keypair không được khởi tạo");
-    }
-
-    try {
-      // Tạo và gửi transaction initialize_multisig
-      const tx = await createInitializeMultisigTx(
-        1, // threshold = 1
-        multisigPDA,
-        feePayerKeypair.publicKey, // owner = feePayer
-        feePayerKeypair,
-        recoveryHash,
-        credentialId
-      );
-      
-      // Ký và gửi transaction
-      tx.feePayer = feePayerKeypair.publicKey;
-      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-      tx.sign(feePayerKeypair);
-      
-      const signature = await connection.sendRawTransaction(tx.serialize());
-      console.log("Transaction đã gửi, chữ ký:", signature);
-      
-      await connection.confirmTransaction(signature, 'confirmed');
-      console.log("Khởi tạo ví trên blockchain thành công!");
-      
-      // Cấu hình WebAuthn (không bắt buộc để thành công)
-      try {
-        const webauthnTx = await createConfigureWebAuthnTx(
-          webauthnPubkey,
-          multisigPDA,
-          feePayerKeypair.publicKey
-        );
-        
-        webauthnTx.feePayer = feePayerKeypair.publicKey;
-        webauthnTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-        webauthnTx.sign(feePayerKeypair);
-        
-        const webauthnSig = await connection.sendRawTransaction(webauthnTx.serialize());
-        await connection.confirmTransaction(webauthnSig, 'confirmed');
-        console.log("Cấu hình WebAuthn thành công!");
-      } catch (webauthnError) {
-        console.error("Lỗi khi cấu hình WebAuthn:", webauthnError);
-        console.log("Ví vẫn được tạo thành công nhưng chưa cấu hình WebAuthn!");
-      }
-    } catch (error) {
-      console.error("Lỗi:", error);
-      throw error;
+      localStorage.setItem('walletList', JSON.stringify(walletList));
     }
   };
 
@@ -309,7 +304,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ onWalletCreated })
           
           <button
             className="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded text-white"
-            onClick={completeWalletCreation}
+            onClick={createWallet}
             disabled={isCreating}
           >
             {isCreating ? "Đang tạo ví..." : "Hoàn tất đăng ký"}

@@ -1,15 +1,91 @@
 .App {
   text-align: center;
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 20px;
 }
 
 .App-header {
-  margin-bottom: 30px;
+  background-color: #282c34;
+  min-height: 100vh;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
+  justify-content: flex-start;
+  color: white;
+  padding: 20px;
+}
+
+h1 {
+  margin-bottom: 30px;
+  color: #61dafb;
+}
+
+h2 {
+  margin-top: 20px;
+  margin-bottom: 15px;
+  color: #61dafb;
+}
+
+.wallet-info, .wallet-actions, .guardian-actions, .transaction-status {
+  width: 80%;
+  max-width: 800px;
+  background-color: #373b44;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+button {
+  background-color: #61dafb;
+  border: none;
+  color: #282c34;
+  padding: 10px 20px;
+  margin: 5px;
+  border-radius: 5px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+button:hover {
+  background-color: #4fa8d1;
+  transform: scale(1.05);
+}
+
+input {
+  padding: 10px;
+  margin: 10px;
+  border-radius: 5px;
+  border: none;
+  width: 300px;
+}
+
+label {
+  margin-right: 10px;
+}
+
+.transaction-status p {
+  white-space: pre-line;
+  text-align: left;
+  padding: 10px;
+  background-color: #1e2127;
+  border-radius: 5px;
+  overflow-wrap: break-word;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 10px 0;
+}
+
+pre {
+  background-color: #282c34;
+  padding: 10px;
+  border-radius: 4px;
+  overflow: auto;
+  max-width: 100%;
+  text-align: left;
 }
 
 .wallet-manager {
@@ -31,40 +107,6 @@
   margin-bottom: 10px;
 }
 
-label {
-  display: inline-block;
-  width: 150px;
-  margin-right: 10px;
-}
-
-input {
-  padding: 8px;
-  width: 300px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-
-button {
-  padding: 10px 15px;
-  background-color: #2196F3;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  margin-top: 10px;
-}
-
-button:hover {
-  background-color: #0b7dda;
-}
-
-.status {
-  margin-top: 30px;
-  padding: 15px;
-  background-color: #f5f5f5;
-  border-radius: 8px;
-}
-
 .App-logo {
   height: 40vmin;
   pointer-events: none;
@@ -74,17 +116,6 @@ button:hover {
   .App-logo {
     animation: App-logo-spin infinite 20s linear;
   }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
 }
 
 .App-link {
@@ -98,4 +129,90 @@ button:hover {
   to {
     transform: rotate(360deg);
   }
+}
+
+.create-wallet-section {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 20px 0;
+  background-color: #f8f9fa;
+  width: 100%;
+  max-width: 600px;
+}
+
+.input-group {
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+}
+
+.input-group label {
+  width: 120px;
+  font-weight: bold;
+  margin-right: 10px;
+}
+
+.input-group input {
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  flex: 1;
+}
+
+.required {
+  color: red;
+}
+
+.error-message {
+  color: red;
+  font-size: 12px;
+  margin-top: 5px;
+  margin-left: 130px;
+}
+
+.warning-message {
+  color: orange;
+  font-weight: bold;
+  margin-top: 10px;
+}
+
+.create-wallet-button {
+  background-color: #4CAF50;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  margin-top: 10px;
+}
+
+.create-wallet-button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
+.credential-info {
+  margin-top: 15px;
+  padding: 10px;
+  background-color: #e9f7ef;
+  border-radius: 4px;
+}
+
+.transaction-status {
+  margin-top: 20px;
+  padding: 15px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background-color: #f5f5f5;
+  width: 100%;
+  max-width: 600px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.transaction-status h3 {
+  margin-top: 0;
+  color: #333;
 }
