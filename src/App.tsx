@@ -83,11 +83,14 @@ const bigIntToLeBytes = (value: bigint, bytesLength: number = 8): Uint8Array => 
 };
 
 // Helper function để tính toán MultisigPDA một cách nhất quán
-const calculateMultisigPDA = (programId: PublicKey, credentialId: string): [PublicKey, number] => {
+const calculateMultisigPDA = async (programId: PublicKey, credentialId: string): Promise<[PublicKey, number]> => {
+  // Hash credentialId xuống 32 bytes
+  const hashedCredentialId = await crypto.subtle.digest('SHA-256', Buffer.from(credentialId));
+  
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from("multisig"),
-      Buffer.from(credentialId)
+      Buffer.from(hashedCredentialId)
     ],
     programId
   );
@@ -1461,7 +1464,7 @@ function App() {
         
         // 2. Tính địa chỉ ví từ credential ID với cùng phương thức như khi tạo ví
         // Sử dụng rawIdBase64 không được hash thêm
-        const [walletPDA, bump] = calculateMultisigPDA(PROGRAM_ID, rawIdBase64);
+        const [walletPDA, bump] = await calculateMultisigPDA(PROGRAM_ID, rawIdBase64);
         
         console.log("PDA được tính từ credential:", rawIdBase64);
         console.log("Địa chỉ ví:", walletPDA.toString(), "bump:", bump);
