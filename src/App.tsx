@@ -3,6 +3,7 @@ import { Connection, PublicKey, Keypair, Transaction, SystemProgram, Transaction
 import { Buffer } from 'buffer';
 import './App.css';
 import { createWebAuthnCredential, getWebAuthnAssertionForLogin, calculateMultisigAddress, getWebAuthnAssertion } from './utils/webauthnUtils';
+import { processCredentialIdForPDA } from './utils/helpers';
 
 // Lấy các biến môi trường hoặc sử dụng giá trị mặc định
 const RPC_ENDPOINT = process.env.REACT_APP_RPC_ENDPOINT || 'http://127.0.0.1:8899'; // Localhost validator
@@ -84,19 +85,16 @@ const bigIntToLeBytes = (value: bigint, bytesLength: number = 8): Uint8Array => 
 
 // Helper function để tính toán MultisigPDA một cách nhất quán
 const calculateMultisigPDA = async (programId: PublicKey, credentialId: string): Promise<[PublicKey, number]> => {
-  // Cần base64 decode credential ID trước khi hash
-  const binaryData = Buffer.from(credentialId, 'base64');
-  console.log("Chuỗi credential ID gốc (base64):", credentialId);
-  console.log("Binary data sau khi decode base64:", Buffer.from(binaryData).toString('hex'));
-  
-  // Hash binary data
-  const hashedCredentialId = await crypto.subtle.digest('SHA-256', binaryData);
-  console.log("Hash sau khi digest binary data:", Buffer.from(hashedCredentialId).toString('hex'));
+  // Sử dụng hàm processCredentialIdForPDA từ helpers.ts để xử lý credential ID
+  // đảm bảo nhất quán với smart contract
+  const seedBuffer = processCredentialIdForPDA(credentialId);
+  console.log("Xử lý credential ID:", credentialId);
+  console.log("Seed buffer để tính PDA:", Buffer.from(seedBuffer).toString('hex'));
   
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from("multisig"),
-      Buffer.from(hashedCredentialId)
+      seedBuffer
     ],
     programId
   );

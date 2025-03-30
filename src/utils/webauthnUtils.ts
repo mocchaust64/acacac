@@ -1,6 +1,7 @@
 import { bufferToHex } from './bufferUtils';
 import * as CBOR from 'cbor-web';
 import { PublicKey } from '@solana/web3.js';
+import { processCredentialIdForPDA } from './helpers';
 
 /**
  * Tạo WebAuthn credential mới
@@ -696,17 +697,17 @@ export const getWebAuthnAssertionForLogin = async (
 /**
  * Lấy thông tin Multisig PDA dựa trên credential ID
  */
-export const calculateMultisigAddress = async (
+export const calculateMultisigAddress = (
   programId: PublicKey, 
   credentialId: string
-): Promise<[PublicKey, number]> => {
-  // Hash credentialId xuống 32 bytes
-  const hashedCredentialId = await crypto.subtle.digest('SHA-256', Buffer.from(credentialId));
+): [PublicKey, number] => {
+  // Sử dụng hàm processCredentialIdForPDA từ helpers.ts để đảm bảo tính nhất quán
+  const seedBuffer = processCredentialIdForPDA(credentialId);
   
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from("multisig"),
-      Buffer.from(hashedCredentialId)
+      seedBuffer
     ],
     programId
   );
