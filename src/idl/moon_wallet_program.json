@@ -1,0 +1,621 @@
+{
+  "address": "DeN1rBfabZezHPvrq9q7BbzUbZkrjnHE1kQDrPK8kWQ3",
+  "metadata": {
+    "name": "moon_wallet_program",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "add_guardian",
+      "discriminator": [
+        167,
+        189,
+        170,
+        27,
+        74,
+        240,
+        201,
+        241
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true
+        },
+        {
+          "name": "guardian",
+          "writable": true
+        },
+        {
+          "name": "guardian_pubkey"
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "guardian_id",
+          "type": "u64"
+        },
+        {
+          "name": "guardian_name",
+          "type": "string"
+        },
+        {
+          "name": "recovery_hash_intermediate",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "is_owner",
+          "type": "bool"
+        },
+        {
+          "name": "webauthn_pubkey",
+          "type": {
+            "option": {
+              "array": [
+                "u8",
+                33
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_multisig",
+      "discriminator": [
+        220,
+        130,
+        117,
+        21,
+        27,
+        227,
+        78,
+        213
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true
+        },
+        {
+          "name": "fee_payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "threshold",
+          "type": "u8"
+        },
+        {
+          "name": "credential_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "recover_access_by_guardian",
+      "discriminator": [
+        210,
+        31,
+        244,
+        215,
+        121,
+        93,
+        165,
+        99
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true
+        },
+        {
+          "name": "old_guardian",
+          "docs": [
+            "Guardian cũ (không phải owner nữa)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "old_guardian_pubkey"
+        },
+        {
+          "name": "new_guardian",
+          "docs": [
+            "Guardian mới (sẽ trở thành owner)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "new_guardian_pubkey"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "_old_guardian_id",
+          "type": "u64"
+        },
+        {
+          "name": "_new_guardian_id",
+          "type": "u64"
+        },
+        {
+          "name": "recovery_hash_intermediate",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "new_webauthn_pubkey",
+          "type": {
+            "array": [
+              "u8",
+              33
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "remove_guardian",
+      "discriminator": [
+        72,
+        117,
+        160,
+        244,
+        155,
+        185,
+        71,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true
+        },
+        {
+          "name": "guardian",
+          "writable": true
+        },
+        {
+          "name": "guardian_pubkey"
+        },
+        {
+          "name": "owner_guardian",
+          "docs": [
+            "Yêu cầu phải được ký bởi một guardian có quyền owner"
+          ]
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "_guardian_id",
+          "type": "u64"
+        },
+        {
+          "name": "_owner_guardian_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "update_guardian_status",
+      "discriminator": [
+        17,
+        169,
+        132,
+        234,
+        235,
+        231,
+        211,
+        79
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true
+        },
+        {
+          "name": "guardian",
+          "writable": true
+        },
+        {
+          "name": "guardian_pubkey"
+        },
+        {
+          "name": "owner_guardian",
+          "docs": [
+            "Tài khoản guardian của người gọi, phải là owner"
+          ]
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "_guardian_id",
+          "type": "u64"
+        },
+        {
+          "name": "_owner_guardian_id",
+          "type": "u64"
+        },
+        {
+          "name": "is_active",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "verify_and_execute",
+      "discriminator": [
+        37,
+        165,
+        237,
+        189,
+        225,
+        188,
+        58,
+        41
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true
+        },
+        {
+          "name": "guardian",
+          "docs": [
+            "Tìm guardian owner có webauthn_pubkey mà chúng ta cần xác thực"
+          ]
+        },
+        {
+          "name": "clock"
+        },
+        {
+          "name": "instruction_sysvar"
+        },
+        {
+          "name": "system_program"
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "destination",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "action",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "ActionParams"
+            }
+          }
+        },
+        {
+          "name": "nonce",
+          "type": "u64"
+        },
+        {
+          "name": "timestamp",
+          "type": "i64"
+        },
+        {
+          "name": "message",
+          "type": "bytes"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Guardian",
+      "discriminator": [
+        57,
+        234,
+        122,
+        214,
+        12,
+        246,
+        9,
+        45
+      ]
+    },
+    {
+      "name": "MultiSigWallet",
+      "discriminator": [
+        93,
+        17,
+        107,
+        133,
+        10,
+        77,
+        189,
+        238
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidOperation",
+      "msg": "Không có quyền hoặc dữ liệu không hợp lệ"
+    },
+    {
+      "code": 6001,
+      "name": "LimitExceeded",
+      "msg": "Giới hạn đã đạt tối đa"
+    },
+    {
+      "code": 6002,
+      "name": "GuardianError",
+      "msg": "Guardian không hợp lệ"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidConfig",
+      "msg": "Cấu hình không hợp lệ"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidRecovery",
+      "msg": "Recovery không hợp lệ"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidThreshold",
+      "msg": "Ngưỡng không hợp lệ"
+    },
+    {
+      "code": 6006,
+      "name": "WebAuthnNotConfigured",
+      "msg": "WebAuthn chưa được cấu hình"
+    },
+    {
+      "code": 6007,
+      "name": "NameTooLong",
+      "msg": "Tên ví không được vượt quá 32 ký tự"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidRecoveryKey",
+      "msg": "Recovery key không hợp lệ"
+    },
+    {
+      "code": 6009,
+      "name": "NoGuardians",
+      "msg": "Không có guardian nào để xóa"
+    },
+    {
+      "code": 6010,
+      "name": "InvalidNonce",
+      "msg": "Nonce không hợp lệ"
+    },
+    {
+      "code": 6011,
+      "name": "FutureTimestamp",
+      "msg": "Timestamp thuộc về tương lai"
+    },
+    {
+      "code": 6012,
+      "name": "OutdatedTimestamp",
+      "msg": "Timestamp quá cũ"
+    },
+    {
+      "code": 6013,
+      "name": "ExpiredTimestamp",
+      "msg": "Timestamp đã hết hạn"
+    },
+    {
+      "code": 6014,
+      "name": "InstructionMissing",
+      "msg": "Instruction xác thực chữ ký bị thiếu"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidSignatureVerification",
+      "msg": "Xác thực chữ ký không hợp lệ"
+    },
+    {
+      "code": 6016,
+      "name": "PublicKeyMismatch",
+      "msg": "Public key không khớp với wallet"
+    },
+    {
+      "code": 6017,
+      "name": "MessageMismatch",
+      "msg": "Message không khớp"
+    },
+    {
+      "code": 6018,
+      "name": "InvalidInstructionData",
+      "msg": "Dữ liệu instruction không hợp lệ"
+    },
+    {
+      "code": 6019,
+      "name": "InvalidSignatureCount",
+      "msg": "Số lượng chữ ký không hợp lệ"
+    },
+    {
+      "code": 6020,
+      "name": "UnsupportedAction",
+      "msg": "Hành động không được hỗ trợ"
+    },
+    {
+      "code": 6021,
+      "name": "InvalidGuardian",
+      "msg": "Guardian không hợp lệ hoặc không được tìm thấy"
+    },
+    {
+      "code": 6022,
+      "name": "InactiveGuardian",
+      "msg": "Guardian đang không hoạt động"
+    }
+  ],
+  "types": [
+    {
+      "name": "ActionParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "amount",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "destination",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "token_mint",
+            "type": {
+              "option": "pubkey"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Guardian",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "guardian_id",
+            "type": "u64"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "is_active",
+            "type": "bool"
+          },
+          {
+            "name": "recovery_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "is_owner",
+            "type": "bool"
+          },
+          {
+            "name": "webauthn_pubkey",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  33
+                ]
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MultiSigWallet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "threshold",
+            "type": "u8"
+          },
+          {
+            "name": "guardian_count",
+            "type": "u8"
+          },
+          {
+            "name": "recovery_nonce",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "transaction_nonce",
+            "type": "u64"
+          },
+          {
+            "name": "last_transaction_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "credential_id",
+            "type": "string"
+          }
+        ]
+      }
+    }
+  ]
+}
