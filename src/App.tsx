@@ -3,14 +3,14 @@ import { Connection, PublicKey, Keypair, Transaction, SystemProgram, Transaction
 import { Buffer } from 'buffer';
 import './App.css';
 import { createWebAuthnCredential, getWebAuthnAssertionForLogin, calculateMultisigAddress, getWebAuthnAssertion } from './utils/webauthnUtils';
-import { processCredentialIdForPDA } from './utils/helpers';
+import { processCredentialIdForPDA, getMultisigPDA, getGuardianPDA, getAllGuardianPDAs } from './utils/credentialUtils';
 
 // Lấy các biến môi trường hoặc sử dụng giá trị mặc định
 const RPC_ENDPOINT = process.env.REACT_APP_RPC_ENDPOINT || 'http://127.0.0.1:8899'; // Localhost validator
-const PROGRAM_ID_STRING = process.env.REACT_APP_PROGRAM_ID || 'DeN1rBfabZezHPvrq9q7BbzUbZkrjnHE1kQDrPK8kWQ3'; // Program ID mới triển khai
+const PROGRAM_ID_STRING = process.env.REACT_APP_PROGRAM_ID || 'BWzgXaQGxFk1ojzJ1Y2c91QTw7uF9zK9AJcGkdJA3VZt'; // Program ID mới triển khai
 
 // Địa chỉ Program ID từ smart contract
-const PROGRAM_ID = new PublicKey(PROGRAM_ID_STRING);
+export const PROGRAM_ID = new PublicKey(PROGRAM_ID_STRING);
 
 // Log biến môi trường để debug
 console.log("Biến môi trường RPC_ENDPOINT:", process.env.REACT_APP_RPC_ENDPOINT);
@@ -178,6 +178,14 @@ const convertSecretKeyStringToUint8Array = (secretKeyString: string | undefined)
   return new Uint8Array(bytes);
 };
 
+// Add this function near the top with other utility functions
+const hashCredentialId = async (credentialId: string): Promise<Uint8Array> => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(credentialId);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return new Uint8Array(hashBuffer);
+};
+
 function App() {
   const [walletKeypair, setWalletKeypair] = useState<Keypair | null>(null);
   const [walletBalance, setWalletBalance] = useState<number>(0);
@@ -336,23 +344,14 @@ function App() {
       setTransactionStatus(prev => prev + `\nĐã tạo khóa WebAuthn thành công!\nCredential ID (base64): ${rawIdBase64.slice(0, 10)}...\nPublic Key: ${result.publicKey.slice(0, 10)}...`);
       
       // 2. Tính PDA cho Multisig
-      // Sử dụng credential ID làm seed - đảm bảo tính duy nhất!
-      console.log("Original Credential ID:", result.credentialId);
-      console.log("Credential ID length:", result.credentialId.length);
-      console.log("Raw ID:", result.rawId);
+      const multisigPDA = getMultisigPDA(rawIdBase64);
+      console.log("Multisig PDA:", multisigPDA.toString());
       
-      // Đã chuyển đổi rawId thành chuỗi base64 ở trên
-      console.log("Raw ID as base64:", rawIdBase64);
-      
-      // Sử dụng helper function để tính PDA một cách nhất quán
-      const [pda, bump] = await calculateMultisigAddress(PROGRAM_ID, rawIdBase64);
-      console.log("PDA with credential ID:", pda.toString(), "bump:", bump);
-      
-      setMultisigAddress(pda);
-      setTransactionStatus(prev => prev + `\n\nBước 2: Đang khởi tạo ví multisig tại địa chỉ: ${pda.toString()}...`);
+      setMultisigAddress(multisigPDA);
+      setTransactionStatus(prev => prev + `\n\nBước 2: Đang khởi tạo ví multisig tại địa chỉ: ${multisigPDA.toString()}...`);
       
       // Kiểm tra xem multisig account đã tồn tại chưa
-      const existingAccount = await connection.getAccountInfo(pda);
+      const existingAccount = await connection.getAccountInfo(multisigPDA);
       if (existingAccount) {
         setTransactionStatus(prev => prev + `\n\nLỖI: Ví multisig với credential ID này đã tồn tại. Điều này gần như không thể xảy ra vì credential ID luôn duy nhất.`);
         return;
@@ -368,7 +367,7 @@ function App() {
       const [guardianPDAAddress] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("guardian").subarray(0),
-          pda.toBuffer(),
+          multisigPDA.toBuffer(),
           guardianIdBytes
         ],
         PROGRAM_ID
@@ -407,7 +406,7 @@ function App() {
       // Thêm instruction khởi tạo multisig vào transaction
       transaction.add(new TransactionInstruction({
         keys: [
-          { pubkey: pda, isSigner: false, isWritable: true },
+          { pubkey: multisigPDA, isSigner: false, isWritable: true },
           { pubkey: projectFeePayerKeypair.publicKey, isSigner: true, isWritable: true },
           { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }
         ],
@@ -460,27 +459,12 @@ function App() {
         const guardianIdBytes = bigIntToLeBytes(guardianId);
         
         // 5.1 Tính PDA cho multisig với credential_id
-        // LƯU Ý: Smart contract đã được cập nhật để sử dụng nhất quán credential_id.as_bytes()
-        // Thay vì sử dụng seed cố định "seed_for_pda" như trước
-        const [guardianMultisigPDA, _] = PublicKey.findProgramAddressSync(
-          [
-            Buffer.from("multisig"),
-            Buffer.from(credentialIdString) // Sử dụng credential ID để tính PDA
-          ],
-          PROGRAM_ID
-        );
+        const guardianMultisigPDA = multisigPDA;
         
         console.log("Sử dụng PDA cho guardian với multisig PDA:", guardianMultisigPDA.toString());
         
         // 5.2 Tính PDA cho guardian
-        const [guardianPDA] = PublicKey.findProgramAddressSync(
-          [
-            Buffer.from("guardian"),
-            guardianMultisigPDA.toBuffer(),
-            guardianIdBytes
-          ],
-          PROGRAM_ID
-        );
+        const guardianPDA = getGuardianPDA(guardianMultisigPDA, 1); // Owner có ID = 1
         
         setGuardianPDA(guardianPDA);
         
@@ -537,7 +521,7 @@ function App() {
         addGuardianTransaction.add(
           new TransactionInstruction({
             keys: [
-              { pubkey: pda, isSigner: false, isWritable: true },
+              { pubkey: multisigPDA, isSigner: false, isWritable: true },
               { pubkey: guardianPDA, isSigner: false, isWritable: true },
               { pubkey: projectFeePayerKeypair.publicKey, isSigner: false, isWritable: false },
               { pubkey: projectFeePayerKeypair.publicKey, isSigner: true, isWritable: true },
@@ -566,12 +550,12 @@ function App() {
       
       // 6. Hoàn thành quá trình tạo ví
       setTransactionStatus(prev => prev + '\n\n✅ VÍ MOON WALLET ĐÃ ĐƯỢC TẠO THÀNH CÔNG!\n' +
-        `Địa chỉ ví Multisig: ${pda.toString()}\n` +
+        `Địa chỉ ví Multisig: ${multisigPDA.toString()}\n` +
         `Recovery Phrase: ${recoveryPhrase}\n` +
         'Vui lòng lưu lại thông tin này để sử dụng sau này!');
       
       // Kiểm tra số dư của ví PDA sau khi tạo
-      await loadPdaBalance(pda);
+      await loadPdaBalance(multisigPDA);
       
     } catch (error: any) {
       console.error('Lỗi trong quá trình tạo ví:', error);
@@ -1468,13 +1452,14 @@ function App() {
         
         // 2. Tính địa chỉ ví từ credential ID với cùng phương thức như khi tạo ví
         // Sử dụng calculateMultisigPDA đã được cập nhật để hash credential ID
-        const [walletPDA, bump] = await calculateMultisigPDA(PROGRAM_ID, rawIdBase64);
+        const multisigPDA = getMultisigPDA(rawIdBase64);
+        console.log("Multisig PDA:", multisigPDA.toString());
         
-        console.log("PDA được tính từ credential:", rawIdBase64);
-        console.log("Địa chỉ ví:", walletPDA.toString(), "bump:", bump);
+        // Lấy tất cả guardian PDAs
+        const guardianPDAs = getAllGuardianPDAs(multisigPDA, 3); // Giả sử có 3 guardian
         
         // 3. Kiểm tra xem ví có tồn tại không
-        const walletAccount = await connection.getAccountInfo(walletPDA);
+        const walletAccount = await connection.getAccountInfo(multisigPDA);
         
         if (!walletAccount) {
           console.log("Thử tìm địa chỉ ví đã biết:", "2223661D9wT19eWZqAkicC6P5tAGAwkpjxMgF4EpJbwh");
@@ -1483,23 +1468,23 @@ function App() {
           return;
         }
         
-        setTransactionStatus(prev => prev + `\nĐã tìm thấy ví tại địa chỉ: ${walletPDA.toString()}\n\nBước 3: Đang tải thông tin ví...`);
+        setTransactionStatus(prev => prev + `\nĐã tìm thấy ví tại địa chỉ: ${multisigPDA.toString()}\n\nBước 3: Đang tải thông tin ví...`);
         
         // 4. Cập nhật state với thông tin ví
-        setMultisigAddress(walletPDA);
+        setMultisigAddress(multisigPDA);
         setCredentialId(rawIdBase64); // Lưu credential ID gốc
         
         // 5. Tìm guardian PDA
         await findGuardianAddress(1); // Tìm guardian chính (owner)
         
         // 6. Tải số dư và danh sách guardian
-        await loadPdaBalance(walletPDA);
+        await loadPdaBalance(multisigPDA);
         await getExistingGuardianIds();
         
         // 7. Hoàn thành đăng nhập
         setIsLoggedIn(true);
         setIsLoggingIn(false);
-        setTransactionStatus(`Đăng nhập thành công!\n\nĐịa chỉ ví: ${walletPDA.toString()}\nSố guardian: ${existingGuardians.length}`);
+        setTransactionStatus(`Đăng nhập thành công!\n\nĐịa chỉ ví: ${multisigPDA.toString()}\nSố guardian: ${existingGuardians.length}`);
         
         // 8. Ẩn form đăng nhập
         setShowLoginForm(false);

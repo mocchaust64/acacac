@@ -1,5 +1,5 @@
 {
-  "address": "DeN1rBfabZezHPvrq9q7BbzUbZkrjnHE1kQDrPK8kWQ3",
+  "address": "BWzgXaQGxFk1ojzJ1Y2c91QTw7uF9zK9AJcGkdJA3VZt",
   "metadata": {
     "name": "moon_wallet_program",
     "version": "0.1.0",
@@ -9,16 +9,7 @@
   "instructions": [
     {
       "name": "add_guardian",
-      "discriminator": [
-        167,
-        189,
-        170,
-        27,
-        74,
-        240,
-        201,
-        241
-      ],
+      "discriminator": [167, 189, 170, 27, 74, 240, 201, 241],
       "accounts": [
         {
           "name": "multisig",
@@ -52,10 +43,7 @@
         {
           "name": "recovery_hash_intermediate",
           "type": {
-            "array": [
-              "u8",
-              32
-            ]
+            "array": ["u8", 32]
           }
         },
         {
@@ -66,10 +54,7 @@
           "name": "webauthn_pubkey",
           "type": {
             "option": {
-              "array": [
-                "u8",
-                33
-              ]
+              "array": ["u8", 33]
             }
           }
         }
@@ -77,16 +62,7 @@
     },
     {
       "name": "initialize_multisig",
-      "discriminator": [
-        220,
-        130,
-        117,
-        21,
-        27,
-        227,
-        78,
-        213
-      ],
+      "discriminator": [220, 130, 117, 21, 27, 227, 78, 213],
       "accounts": [
         {
           "name": "multisig",
@@ -114,16 +90,7 @@
     },
     {
       "name": "recover_access_by_guardian",
-      "discriminator": [
-        210,
-        31,
-        244,
-        215,
-        121,
-        93,
-        165,
-        99
-      ],
+      "discriminator": [210, 31, 244, 215, 121, 93, 165, 99],
       "accounts": [
         {
           "name": "multisig",
@@ -131,9 +98,7 @@
         },
         {
           "name": "old_guardian",
-          "docs": [
-            "Guardian cũ (không phải owner nữa)"
-          ],
+          "docs": ["Guardian cũ (không phải owner nữa)"],
           "writable": true
         },
         {
@@ -141,9 +106,7 @@
         },
         {
           "name": "new_guardian",
-          "docs": [
-            "Guardian mới (sẽ trở thành owner)"
-          ],
+          "docs": ["Guardian mới (sẽ trở thành owner)"],
           "writable": true
         },
         {
@@ -165,35 +128,20 @@
         {
           "name": "recovery_hash_intermediate",
           "type": {
-            "array": [
-              "u8",
-              32
-            ]
+            "array": ["u8", 32]
           }
         },
         {
           "name": "new_webauthn_pubkey",
           "type": {
-            "array": [
-              "u8",
-              33
-            ]
+            "array": ["u8", 33]
           }
         }
       ]
     },
     {
       "name": "remove_guardian",
-      "discriminator": [
-        72,
-        117,
-        160,
-        244,
-        155,
-        185,
-        71,
-        18
-      ],
+      "discriminator": [72, 117, 160, 244, 155, 185, 71, 18],
       "accounts": [
         {
           "name": "multisig",
@@ -208,9 +156,7 @@
         },
         {
           "name": "owner_guardian",
-          "docs": [
-            "Yêu cầu phải được ký bởi một guardian có quyền owner"
-          ]
+          "docs": ["Yêu cầu phải được ký bởi một guardian có quyền owner"]
         },
         {
           "name": "owner",
@@ -234,16 +180,7 @@
     },
     {
       "name": "update_guardian_status",
-      "discriminator": [
-        17,
-        169,
-        132,
-        234,
-        235,
-        231,
-        211,
-        79
-      ],
+      "discriminator": [17, 169, 132, 234, 235, 231, 211, 79],
       "accounts": [
         {
           "name": "multisig",
@@ -258,9 +195,7 @@
         },
         {
           "name": "owner_guardian",
-          "docs": [
-            "Tài khoản guardian của người gọi, phải là owner"
-          ]
+          "docs": ["Tài khoản guardian của người gọi, phải là owner"]
         },
         {
           "name": "owner",
@@ -285,16 +220,7 @@
     },
     {
       "name": "verify_and_execute",
-      "discriminator": [
-        37,
-        165,
-        237,
-        189,
-        225,
-        188,
-        58,
-        41
-      ],
+      "discriminator": [37, 165, 237, 189, 225, 188, 58, 41],
       "accounts": [
         {
           "name": "multisig",
@@ -356,29 +282,11 @@
   "accounts": [
     {
       "name": "Guardian",
-      "discriminator": [
-        57,
-        234,
-        122,
-        214,
-        12,
-        246,
-        9,
-        45
-      ]
+      "discriminator": [57, 234, 122, 214, 12, 246, 9, 45]
     },
     {
       "name": "MultiSigWallet",
-      "discriminator": [
-        93,
-        17,
-        107,
-        133,
-        10,
-        77,
-        189,
-        238
-      ]
+      "discriminator": [93, 17, 107, 133, 10, 77, 189, 238]
     }
   ],
   "errors": [
@@ -549,10 +457,7 @@
           {
             "name": "recovery_hash",
             "type": {
-              "array": [
-                "u8",
-                32
-              ]
+              "array": ["u8", 32]
             }
           },
           {
@@ -563,10 +468,7 @@
             "name": "webauthn_pubkey",
             "type": {
               "option": {
-                "array": [
-                  "u8",
-                  33
-                ]
+                "array": ["u8", 33]
               }
             }
           },
