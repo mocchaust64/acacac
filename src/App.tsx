@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Connection, PublicKey, Keypair, Transaction, SystemProgram, TransactionInstruction, Commitment, Signer, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { Buffer } from 'buffer';
 import './App.css';
-import { createWebAuthnCredential, getWebAuthnAssertionForLogin, calculateMultisigAddress, getWebAuthnAssertion } from './utils/webauthnUtils';
+import { createWebAuthnCredential, getWebAuthnAssertionForLogin, getWebAuthnAssertion } from './utils/webauthnUtils';
 
 // Lấy các biến môi trường hoặc sử dụng giá trị mặc định
 const RPC_ENDPOINT = process.env.REACT_APP_RPC_ENDPOINT || 'http://127.0.0.1:8899'; // Localhost validator
@@ -83,11 +83,35 @@ const bigIntToLeBytes = (value: bigint, bytesLength: number = 8): Uint8Array => 
 };
 
 // Helper function để tính toán MultisigPDA một cách nhất quán
-const calculateMultisigPDA = (programId: PublicKey, credentialId: string): [PublicKey, number] => {
+const calculateMultisigPDA = async (programId: PublicKey, credentialId: string): Promise<[PublicKey, number]> => {
+  const credentialBuffer = Buffer.from(credentialId);
+  
+  // Seed tối đa cho PDA là 32 bytes, trừ đi "multisig" (8 bytes) còn 24 bytes
+  let seedBuffer: Buffer;
+  
+  if (credentialBuffer.length > 24) {
+    console.log("Credential ID dài quá 24 bytes, thực hiện hash để đảm bảo đồng nhất");
+    
+    // Hash credential ID nếu quá dài để đảm bảo tính đồng nhất
+    // Sử dụng thuật toán XOR đơn giản như trong smart contract
+    const hashArray = new Uint8Array(32);
+    for (let i = 0; i < credentialBuffer.length; i++) {
+      hashArray[i % 32] ^= credentialBuffer[i];
+    }
+    
+    // Chỉ lấy 24 bytes đầu tiên
+    seedBuffer = Buffer.from(hashArray.subarray(0, 24));
+    console.log("Credential ID sau khi hash:", seedBuffer.toString('base64'));
+  } else {
+    // Nếu không quá dài, tạo buffer mới với độ dài cố định 24 bytes, padding với 0
+    seedBuffer = Buffer.alloc(24, 0);
+    credentialBuffer.copy(seedBuffer, 0, 0, Math.min(credentialBuffer.length, 24));
+  }
+  
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from("multisig"),
-      Buffer.from(credentialId)
+      seedBuffer
     ],
     programId
   );
@@ -336,10 +360,12 @@ function App() {
       
       // Đã chuyển đổi rawId thành chuỗi base64 ở trên
       console.log("Raw ID as base64:", rawIdBase64);
+      console.log("Raw ID length (bytes):", result.rawId.length, "- Độ dài này có thể khác nhau giữa các trình duyệt (16-32 bytes), nhưng đã được xử lý bằng cách hash để đồng bộ");
       
       // Sử dụng helper function để tính PDA một cách nhất quán
-      const [pda, bump] = calculateMultisigAddress(PROGRAM_ID, rawIdBase64);
+      const [pda, bump] = await calculateMultisigPDA(PROGRAM_ID, rawIdBase64);
       console.log("PDA with credential ID:", pda.toString(), "bump:", bump);
+      console.log("Credential ID được sử dụng để tính PDA:", rawIdBase64);
       
       setMultisigAddress(pda);
       setTransactionStatus(prev => prev + `\n\nBước 2: Đang khởi tạo ví multisig tại địa chỉ: ${pda.toString()}...`);
@@ -383,6 +409,8 @@ function App() {
       const credentialIdString = rawIdBase64;
       const credentialIdBuffer = Buffer.from(credentialIdString);
       console.log("Credential ID gửi đi (chuỗi gốc):", credentialIdString);
+      console.log("Credential ID gửi đi (độ dài):", credentialIdBuffer.length, "bytes");
+      console.log("Credential ID gửi đi (bytes):", Array.from(credentialIdBuffer));
       
       const credentialIdLenBuffer = Buffer.alloc(4);
       credentialIdLenBuffer.writeUInt32LE(credentialIdBuffer.length, 0);
@@ -452,24 +480,11 @@ function App() {
         const guardianId = BigInt(1); // Owner có ID = 1
         const guardianIdBytes = bigIntToLeBytes(guardianId);
         
-        // 5.1 Tính PDA cho multisig với credential_id
-        // LƯU Ý: Smart contract đã được cập nhật để sử dụng nhất quán credential_id.as_bytes()
-        // Thay vì sử dụng seed cố định "seed_for_pda" như trước
-        const [guardianMultisigPDA, _] = PublicKey.findProgramAddressSync(
-          [
-            Buffer.from("multisig"),
-            Buffer.from(credentialIdString) // Sử dụng credential ID để tính PDA
-          ],
-          PROGRAM_ID
-        );
-        
-        console.log("Sử dụng PDA cho guardian với multisig PDA:", guardianMultisigPDA.toString());
-        
-        // 5.2 Tính PDA cho guardian
+        // Tính PDA cho guardian sử dụng địa chỉ PDA của ví
         const [guardianPDA] = PublicKey.findProgramAddressSync(
           [
             Buffer.from("guardian"),
-            guardianMultisigPDA.toBuffer(),
+            pda.toBuffer(),
             guardianIdBytes
           ],
           PROGRAM_ID
@@ -572,7 +587,7 @@ function App() {
     }
   };
 
-  // Sửa lại hàm tính PDA cho multisig wallet
+  // Sửa hàm findMultisigAddress
   const findMultisigAddress = async () => {
     // Sử dụng credential ID (nếu có) hoặc một giá trị tạm thời nếu chưa có
     if (!credentialId) {
@@ -583,14 +598,30 @@ function App() {
     
     console.log("findMultisigAddress - credential ID:", credentialId);
     
-    // Sử dụng helper function để tính PDA một cách nhất quán
-    const [pda, bump] = calculateMultisigAddress(PROGRAM_ID, credentialId);
-    console.log("findMultisigAddress - PDA:", pda.toString(), "bump:", bump);
-    
-    setMultisigAddress(pda);
-    
-    // Load balance cho PDA
-    await loadPdaBalance(pda);
+    try {
+      // Sử dụng helper function để tính PDA một cách nhất quán
+      const [pda, bump] = await calculateMultisigPDA(PROGRAM_ID, credentialId);
+      console.log("findMultisigAddress - PDA:", pda.toString(), "bump:", bump);
+      
+      setMultisigAddress(pda);
+      
+      // Load balance cho PDA
+      await loadPdaBalance(pda);
+      
+      // Thử tìm tài khoản PDA
+      const accountInfo = await connection.getAccountInfo(pda);
+      if (accountInfo) {
+        setTransactionStatus(`Đã tìm thấy ví tại địa chỉ ${pda.toString()}! (Bump: ${bump})`);
+        
+        // Thử tìm địa chỉ guardian đầu tiên
+        await findGuardianAddress(1);
+      } else {
+        setTransactionStatus(`Không tìm thấy ví tại địa chỉ ${pda.toString()}! Có thể ví chưa được khởi tạo.`);
+      }
+    } catch (error) {
+      console.error("Lỗi khi tính PDA:", error);
+      setTransactionStatus(`Lỗi: ${(error as Error).message}`);
+    }
   };
 
   // Tải balance với xử lý lỗi tốt hơn
@@ -1460,8 +1491,8 @@ function App() {
         setTransactionStatus(prev => prev + '\nXác thực WebAuthn thành công!\n\nBước 2: Đang tính toán địa chỉ ví...');
         
         // 2. Tính địa chỉ ví từ credential ID với cùng phương thức như khi tạo ví
-        // Sử dụng rawIdBase64 không được hash thêm
-        const [walletPDA, bump] = calculateMultisigPDA(PROGRAM_ID, rawIdBase64);
+        // Sử dụng calculateMultisigPDA đã được cập nhật để hash credential ID
+        const [walletPDA, bump] = await calculateMultisigPDA(PROGRAM_ID, rawIdBase64);
         
         console.log("PDA được tính từ credential:", rawIdBase64);
         console.log("Địa chỉ ví:", walletPDA.toString(), "bump:", bump);
