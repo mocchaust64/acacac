@@ -49,11 +49,11 @@ export const createInitializeMultisigTx = async (
     
     // Nối tất cả lại với nhau
     const data = Buffer.concat([
-      discriminator,
-      thresholdBuffer,
-      recoveryHashBuffer,
-      credentialIdLenBuffer,
-      credentialId
+      new Uint8Array(discriminator),
+      new Uint8Array(thresholdBuffer),
+      new Uint8Array(recoveryHashBuffer),
+      new Uint8Array(credentialIdLenBuffer),
+      new Uint8Array(credentialId)
     ]);
     
     // Tạo transaction instruction
@@ -92,7 +92,7 @@ function compressPublicKey(uncompressedKey: Buffer): Buffer {
   // Tạo khóa nén: prefix (1 byte) + x (32 bytes)
   const compressedKey = Buffer.alloc(33);
   compressedKey[0] = prefix;
-  x.copy(compressedKey, 1);
+  new Uint8Array(compressedKey).set(new Uint8Array(x), 1);
   
   return compressedKey;
 }
@@ -127,7 +127,10 @@ export const createConfigureWebAuthnTx = async (
       compressedKey[0] = 0x02; // Prefix cho khóa nén
       if (webauthnPubkey.length > 0) {
         // Sao chép dữ liệu nếu có
-        webauthnPubkey.copy(compressedKey, 1, 0, Math.min(webauthnPubkey.length, 32));
+        new Uint8Array(compressedKey).set(
+          new Uint8Array(webauthnPubkey.subarray(0, Math.min(webauthnPubkey.length, 32))),
+          1
+        );
       }
     }
     
@@ -136,8 +139,8 @@ export const createConfigureWebAuthnTx = async (
     
     // Tạo dữ liệu instruction
     const data = Buffer.concat([
-      discriminator,
-      compressedKey
+      new Uint8Array(discriminator),
+      new Uint8Array(compressedKey)
     ]);
     
     // Tạo instruction với đúng accounts theo IDL
@@ -176,8 +179,8 @@ export const createStorePasswordHashTx = async (
   
   // Sửa lại cách tạo data buffer
   const data = Buffer.concat([
-    discriminator,
-    Buffer.from(Array.from(passwordHash))
+    new Uint8Array(discriminator),
+    new Uint8Array(Buffer.from(Array.from(passwordHash)))
   ]);
   
   // Thêm instruction để lưu password hash
@@ -209,10 +212,10 @@ export const createWebAuthnAuthTx = async (
   
   // Thêm discriminator đúng cho verify_webauthn_auth
   const instructionData = Buffer.concat([
-    Buffer.from([234, 182, 165, 23, 186, 223, 208, 119]), // discriminator từ IDL
-    Buffer.from(webauthnSignature),
-    Buffer.from(authenticatorData),
-    Buffer.from(clientDataJSON)
+    new Uint8Array(Buffer.from([234, 182, 165, 23, 186, 223, 208, 119])), // discriminator từ IDL
+    new Uint8Array(Buffer.from(webauthnSignature)),
+    new Uint8Array(Buffer.from(authenticatorData)),
+    new Uint8Array(Buffer.from(clientDataJSON))
   ]);
   
   const instruction = new web3.TransactionInstruction({
@@ -286,7 +289,7 @@ export const createAddGuardianTx = (
     }
     
     // Nối tất cả buffer lại với nhau
-    const data = Buffer.concat(dataBuffers);
+    const data = Buffer.concat(dataBuffers.map(buffer => new Uint8Array(buffer)));
     
     // Tạo instruction
     const instruction = new TransactionInstruction({

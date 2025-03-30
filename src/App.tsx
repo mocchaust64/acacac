@@ -338,7 +338,7 @@ function App() {
       console.log("Raw ID as base64:", rawIdBase64);
       
       // Sử dụng helper function để tính PDA một cách nhất quán
-      const [pda, bump] = calculateMultisigAddress(PROGRAM_ID, rawIdBase64);
+      const [pda, bump] = await calculateMultisigAddress(PROGRAM_ID, rawIdBase64);
       console.log("PDA with credential ID:", pda.toString(), "bump:", bump);
       
       setMultisigAddress(pda);
@@ -584,7 +584,7 @@ function App() {
     console.log("findMultisigAddress - credential ID:", credentialId);
     
     // Sử dụng helper function để tính PDA một cách nhất quán
-    const [pda, bump] = calculateMultisigAddress(PROGRAM_ID, credentialId);
+    const [pda, bump] = await calculateMultisigAddress(PROGRAM_ID, credentialId);
     console.log("findMultisigAddress - PDA:", pda.toString(), "bump:", bump);
     
     setMultisigAddress(pda);

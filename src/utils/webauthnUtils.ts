@@ -696,14 +696,17 @@ export const getWebAuthnAssertionForLogin = async (
 /**
  * Lấy thông tin Multisig PDA dựa trên credential ID
  */
-export const calculateMultisigAddress = (
+export const calculateMultisigAddress = async (
   programId: PublicKey, 
   credentialId: string
-): [PublicKey, number] => {
+): Promise<[PublicKey, number]> => {
+  // Hash credentialId xuống 32 bytes
+  const hashedCredentialId = await crypto.subtle.digest('SHA-256', Buffer.from(credentialId));
+  
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from("multisig"),
-      Buffer.from(credentialId)
+      Buffer.from(hashedCredentialId)
     ],
     programId
   );
