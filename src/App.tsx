@@ -1,13 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Connection, PublicKey, Keypair, Transaction, SystemProgram, TransactionInstruction, Commitment, Signer, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { Connection, PublicKey, Keypair, Transaction, SystemProgram, TransactionInstruction, Commitment, Signer, LAMPORTS_PER_SOL, sendAndConfirmTransaction } from '@solana/web3.js';
 import { Buffer } from 'buffer';
 import './App.css';
 import { createWebAuthnCredential, getWebAuthnAssertionForLogin, calculateMultisigAddress, getWebAuthnAssertion } from './utils/webauthnUtils';
 import { processCredentialIdForPDA, getMultisigPDA, getGuardianPDA, getAllGuardianPDAs } from './utils/credentialUtils';
+import { QRCodeSVG } from 'qrcode.react';
+import { 
+  saveInvitation, 
+  getInvitation, 
+  getGuardianData, 
+  updateGuardianStatus,
+  getPendingInvites 
+} from './firebase/guardianService';
 
 // Lấy các biến môi trường hoặc sử dụng giá trị mặc định
 const RPC_ENDPOINT = process.env.REACT_APP_RPC_ENDPOINT || 'http://127.0.0.1:8899'; // Localhost validator
-const PROGRAM_ID_STRING = process.env.REACT_APP_PROGRAM_ID || 'BWzgXaQGxFk1ojzJ1Y2c91QTw7uF9zK9AJcGkdJA3VZt'; // Program ID mới triển khai
+const PROGRAM_ID_STRING = process.env.REACT_APP_PROGRAM_ID || 'DeN1rBfabZezHPvrq9q7BbzUbZkrjnHE1kQDrPK8kWQ3'; // Program ID mới triển khai
 
 // Địa chỉ Program ID từ smart contract
 export const PROGRAM_ID = new PublicKey(PROGRAM_ID_STRING);
@@ -225,6 +233,13 @@ function App() {
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [showLoginForm, setShowLoginForm] = useState<boolean>(false);
+  
+  // Thêm state cho chức năng tạo invitation
+  const [inviteLink, setInviteLink] = useState<string>('');
+  const [inviteCode, setInviteCode] = useState<string>('');
+  const [showQRCode, setShowQRCode] = useState<boolean>(false);
+  const [showInviteInput, setShowInviteInput] = useState<boolean>(false);
+  const [pendingInvites, setPendingInvites] = useState<string[]>([]);
 
   // Tạo keypair mới khi component được mount
   useEffect(() => {
@@ -1500,327 +1515,831 @@ function App() {
     }
   };
 
+  // Hàm tạo mã mời ngẫu nhiên
+  const generateRandomCode = (length: number): string => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    const randomValues = new Uint8Array(length);
+    crypto.getRandomValues(randomValues);
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(randomValues[i] % chars.length);
+    }
+    return result;
+  };
+
+  // Hàm tạo link mời guardian mới
+  const generateGuardianInvite = async () => {
+    try {
+      // Kiểm tra ví đã được tạo chưa
+      if (!multisigAddress) {
+        setTransactionStatus('Vui lòng tạo ví trước khi mời guardian.');
+        return;
+      }
+      
+      // Lấy danh sách guardian ID hiện tại
+      const existingIds = await getExistingGuardianIds();
+      
+      // Sinh guardian ID mới không bị trùng
+      const newGuardianId = generateNewGuardianId(existingIds);
+      console.log("Đã tạo guardian ID mới:", newGuardianId);
+      
+      // Tạo mã ngẫu nhiên cho link mời
+      const inviteCode = generateRandomCode(8);
+      console.log("Đã tạo mã mời:", inviteCode);
+      
+      // Tạo link mời
+      const inviteLink = `${window.location.origin}/#/guardian-signup/${inviteCode}`;
+      console.log("Link mời được tạo:", inviteLink);
+      
+      // Hiển thị link (đặt state trước khi lưu vào Firebase)
+      setInviteCode(inviteCode);
+      setInviteLink(inviteLink);
+      setShowQRCode(true);
+      
+      // Lưu thông tin vào Firebase
+      console.log("Đang lưu vào Firebase...");
+      try {
+        await saveInvitation({
+          multisigAddress: multisigAddress.toString(),
+          guardianId: newGuardianId,
+          inviteCode,
+          status: 'pending',
+          ownerId: projectFeePayerKeypair?.publicKey.toString() || ''
+        });
+        console.log("Đã lưu vào Firebase thành công");
+      } catch (error) {
+        console.error("Lỗi khi lưu vào Firebase:", error);
+        // Hiển thị lỗi nhưng vẫn tiếp tục hiển thị link mời
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        setTransactionStatus(`Đã tạo link mời guardian: ${inviteLink}\nLưu ý: Có lỗi khi lưu thông tin: ${errorMessage}`);
+        return inviteLink;
+      }
+      
+      setTransactionStatus(`Đã tạo link mời guardian: ${inviteLink}`);
+      
+      return inviteLink;
+    } catch (error: any) {
+      console.error("Lỗi khi tạo link mời guardian:", error);
+      setTransactionStatus(`Lỗi khi tạo link mời guardian: ${error.message}`);
+      return null;
+    }
+  };
+
+  // Tải danh sách mã mời đang chờ
+  const loadPendingInvites = async () => {
+    try {
+      if (!projectFeePayerKeypair) return;
+      
+      const ownerId = projectFeePayerKeypair.publicKey.toString();
+      const invitesList = await getPendingInvites(ownerId);
+      setPendingInvites(invitesList);
+      
+      if (invitesList.length > 0) {
+        console.log(`Tìm thấy ${invitesList.length} guardian đang chờ hoàn tất. Mã mời: ${invitesList.join(', ')}`);
+      }
+    } catch (error) {
+      console.error("Lỗi khi tải danh sách mã mời:", error);
+    }
+  };
+  
+  // Load danh sách mã mời khi component được mount và mỗi khi projectFeePayerKeypair thay đổi
+  useEffect(() => {
+    if (projectFeePayerKeypair) {
+      loadPendingInvites();
+    }
+  }, [projectFeePayerKeypair]);
+
+  // Hàm để lấy thông tin guardian đã đăng ký
+  const fetchGuardianDataFromDatabase = async (inviteCode: string) => {
+    try {
+      return await getGuardianData(inviteCode);
+    } catch (error) {
+      console.error("Lỗi khi lấy dữ liệu guardian:", error);
+      return null;
+    }
+  };
+
+  // Hàm để lấy thông tin invitation
+  const fetchInviteFromDatabase = async (inviteCode: string) => {
+    try {
+      return await getInvitation(inviteCode);
+    } catch (error) {
+      console.error("Lỗi khi lấy dữ liệu invite:", error);
+      return null;
+    }
+  };
+
+  // Hàm để cập nhật trạng thái guardian
+  const updateGuardianStatusInDatabase = async (inviteCode: string, status: string, txSignature?: string) => {
+    try {
+      await updateGuardianStatus(inviteCode, status as any, txSignature);
+    } catch (error) {
+      console.error("Lỗi khi cập nhật trạng thái guardian:", error);
+    }
+  };
+
+  // Hàm hoàn tất đăng ký guardian từ dữ liệu đã lưu
+  const completeGuardianRegistration = async (inviteCode: string) => {
+    try {
+      setTransactionStatus('Đang hoàn tất đăng ký guardian...');
+      
+      // 1. Lấy dữ liệu guardian từ localStorage
+      const guardianData = await fetchGuardianDataFromDatabase(inviteCode);
+      
+      if (!guardianData) {
+        setTransactionStatus('Không tìm thấy dữ liệu guardian. Vui lòng đảm bảo guardian đã hoàn tất đăng ký.');
+        return;
+      }
+      
+      if (guardianData.status !== 'ready') {
+        setTransactionStatus('Guardian chưa hoàn tất đăng ký.');
+        return;
+      }
+      
+      // 2. Lấy thông tin invite
+      const inviteData = await fetchInviteFromDatabase(inviteCode);
+      
+      if (!inviteData) {
+        setTransactionStatus('Không tìm thấy thông tin mời guardian.');
+        return;
+      }
+      
+      // 3. Tính PDA cho guardian
+      const multisigPDA = new PublicKey(inviteData.multisigAddress);
+      const guardianId = inviteData.guardianId;
+      const guardianPDA = await findGuardianAddress(guardianId);
+      
+      if (!guardianPDA) {
+        setTransactionStatus('Không thể tính PDA cho guardian.');
+        return;
+      }
+      
+      // 4. Chuyển đổi dữ liệu thành format phù hợp
+      const hashedRecoveryBytes = new Uint8Array(guardianData.hashedRecoveryBytes);
+      const compressedKeyBuffer = Buffer.from(guardianData.webauthnPublicKey);
+      
+      // 5. Tạo discriminator cho add_guardian
+      const addGuardianDiscriminator = new Uint8Array([167, 189, 170, 27, 74, 240, 201, 241]);
+      
+      // 6. Chuyển đổi guardian ID thành bytes (little-endian)
+      const guardianIdBigInt = BigInt(guardianId);
+      const guardianIdBytes = bigIntToLeBytes(guardianIdBigInt);
+      
+      // 7. Chuẩn bị tên guardian
+      const guardianNameBuffer = Buffer.from(guardianData.guardianName);
+      const guardianNameLenBuffer = Buffer.alloc(4);
+      guardianNameLenBuffer.writeUInt32LE(guardianNameBuffer.length, 0);
+      
+      // 8. Đặt is_owner = false vì đây là guardian member, không phải owner
+      const isOwnerByte = new Uint8Array([0]); // false = 0
+      
+      // 9. Cấu hình webauthn_pubkey là Some(compressed_key)
+      const hasWebauthn = new Uint8Array([1]); // Some variant
+      
+      // 10. Tạo dữ liệu instruction
+      const addGuardianData = concatUint8Arrays(
+        addGuardianDiscriminator,
+        // guardian_id (u64)
+        bufferToUint8Array(Buffer.from(guardianIdBytes)),
+        // guardian_name (string)
+        bufferToUint8Array(guardianNameLenBuffer),
+        bufferToUint8Array(guardianNameBuffer),
+        // recovery_hash_intermediate ([u8; 32])
+        hashedRecoveryBytes,
+        // is_owner (bool)
+        isOwnerByte,
+        // webauthn_pubkey (Option<[u8; 33]>) - Some variant + compressed key
+        hasWebauthn,
+        bufferToUint8Array(Buffer.from(compressedKeyBuffer))
+      );
+      
+      // 11. Tạo transaction add guardian
+      const addGuardianTransaction = new Transaction();
+      addGuardianTransaction.add(
+        new TransactionInstruction({
+          keys: [
+            { pubkey: multisigPDA, isSigner: false, isWritable: true },
+            { pubkey: guardianPDA, isSigner: false, isWritable: true },
+            { pubkey: projectFeePayerKeypair!.publicKey, isSigner: false, isWritable: false },
+            { pubkey: projectFeePayerKeypair!.publicKey, isSigner: true, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }
+          ],
+          programId: PROGRAM_ID,
+          data: Buffer.from(addGuardianData)
+        })
+      );
+      
+      // Sign và gửi transaction với fee payer của dự án
+      addGuardianTransaction.feePayer = projectFeePayerKeypair!.publicKey;
+      addGuardianTransaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      
+      setTransactionStatus(prev => prev + '\nĐang gửi transaction...');
+      const addGuardianSignature = await connection.sendTransaction(
+        addGuardianTransaction,
+        [projectFeePayerKeypair!] as Signer[]
+      );
+      
+      setTransactionStatus(prev => prev + '\nĐang xác nhận transaction...');
+      await connection.confirmTransaction(addGuardianSignature);
+      
+      // Cập nhật trạng thái trong DB
+      await updateGuardianStatusInDatabase(inviteCode, 'completed', addGuardianSignature);
+      
+      setTransactionStatus(`Guardian đã được thêm thành công với ID: ${guardianId}!\n` +
+        `Signature: ${addGuardianSignature}`
+      );
+      
+      // Cập nhật danh sách guardian
+      await getExistingGuardianIds();
+      
+      // Cập nhật số dư của ví PDA
+      await loadPdaBalance(multisigPDA);
+    } catch (error: any) {
+      console.error("Lỗi khi hoàn tất đăng ký guardian:", error);
+      setTransactionStatus(`Lỗi khi hoàn tất đăng ký guardian: ${error.message}`);
+    }
+  };
+
+  // Hàm kiểm tra thông tin guardians trong database
+  const checkGuardiansInDatabase = async () => {
+    try {
+      setTransactionStatus('Đang kiểm tra dữ liệu guardians từ Firestore...');
+      
+      if (!projectFeePayerKeypair) {
+        setTransactionStatus('Không tìm thấy thông tin fee payer.');
+        return;
+      }
+      
+      const ownerId = projectFeePayerKeypair.publicKey.toString();
+      
+      // Lấy danh sách invitations đang chờ
+      const pendingInvites = await getPendingInvites(ownerId);
+      console.log("Danh sách mã mời đang chờ:", pendingInvites);
+      
+      if (pendingInvites.length === 0) {
+        setTransactionStatus('Không tìm thấy mã mời nào đang chờ xử lý.');
+        return;
+      }
+      
+      // Kiểm tra thông tin từng guardian
+      let resultMessage = 'Thông tin guardians từ database:\n\n';
+      
+      for (const inviteCode of pendingInvites) {
+        // Lấy thông tin invitation
+        const inviteData = await getInvitation(inviteCode);
+        if (!inviteData) {
+          resultMessage += `Mã mời ${inviteCode}: Không tìm thấy thông tin invitation.\n`;
+          continue;
+        }
+        
+        // Lấy thông tin guardian
+        const guardianData = await getGuardianData(inviteCode);
+        if (!guardianData) {
+          resultMessage += `Mã mời ${inviteCode}: Invitation tồn tại nhưng chưa có thông tin guardian.\n`;
+          continue;
+        }
+        
+        // Hiển thị thông tin
+        resultMessage += `Mã mời: ${inviteCode}\n`;
+        resultMessage += `Guardian ID: ${guardianData.guardianId}\n`;
+        resultMessage += `Tên guardian: ${guardianData.guardianName}\n`;
+        resultMessage += `Trạng thái: ${guardianData.status}\n`;
+        resultMessage += `WebAuthn ID: ${guardianData.webauthnCredentialId.substring(0, 20)}...\n\n`;
+      }
+      
+      setTransactionStatus(resultMessage);
+    } catch (error) {
+      console.error("Lỗi khi kiểm tra thông tin guardians:", error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setTransactionStatus(`Lỗi khi kiểm tra thông tin guardians: ${errorMessage}`);
+    }
+  };
+
+  // Hoàn tất quá trình đăng ký guardian dựa trên mã mời
+  const completeGuardianSetup = async (inviteCode: string) => {
+    try {
+      setTransactionStatus(`Đang hoàn tất quá trình đăng ký guardian với mã mời: ${inviteCode}...`);
+      
+      // 1. Lấy thông tin guardian
+      const guardianData = await getGuardianData(inviteCode);
+      if (!guardianData) {
+        setTransactionStatus('Không tìm thấy thông tin guardian. Vui lòng đảm bảo guardian đã hoàn tất đăng ký.');
+        return;
+      }
+      
+      if (guardianData.status !== 'ready') {
+        setTransactionStatus(`Guardian có trạng thái không hợp lệ: ${guardianData.status}`);
+        return;
+      }
+      
+      // 2. Thêm guardian vào blockchain
+      setTransactionStatus(prev => prev + '\n\nĐang thêm guardian vào blockchain...');
+      
+      // Tạo multisig PDA từ địa chỉ multisig
+      const multisigPubkey = new PublicKey(guardianData.multisigAddress);
+      
+      // Tạo WebAuthn public key từ dữ liệu lưu trữ
+      const webauthnPubkey = Buffer.from(new Uint8Array(guardianData.webauthnPublicKey));
+      
+      // Chuẩn bị dữ liệu guardian
+      const guardianIndex = guardianData.guardianId;
+      const guardianName = guardianData.guardianName;
+      const guardianType = 0; // 0 = Guardian thường
+      const recoveryHash = Uint8Array.from(guardianData.hashedRecoveryBytes);
+      
+      // Thêm guardian vào blockchain
+      if (projectFeePayerKeypair) {
+        // Tạo transaction
+        const tx = new Transaction();
+        
+        // Tìm PDA cho guardian
+        const guardianIdBigInt = BigInt(guardianIndex);
+        const guardianIdBytes = bigIntToLeBytes(guardianIdBigInt);
+        
+        const [guardianPDA] = await PublicKey.findProgramAddress(
+          [
+            Buffer.from("guardian"),
+            multisigPubkey.toBuffer(),
+            guardianIdBytes
+          ],
+          PROGRAM_ID
+        );
+        
+        // Tạo instruction để thêm guardian
+        // Sử dụng discriminator đúng cho add_guardian theo IDL
+        const addGuardianDiscriminator = new Uint8Array([167, 189, 170, 27, 74, 240, 201, 241]);
+        
+        // Chuẩn bị tên guardian
+        const guardianNameBuffer = Buffer.from(guardianName);
+        const guardianNameLenBuffer = Buffer.alloc(4);
+        guardianNameLenBuffer.writeUInt32LE(guardianNameBuffer.length, 0);
+        
+        // Đặt is_owner = false vì đây là guardian member, không phải owner
+        const isOwnerByte = new Uint8Array([0]); // false = 0
+        
+        // Cấu hình webauthn_pubkey là Some(webauthnPubkey)
+        const hasWebauthn = new Uint8Array([1]); // Some variant
+        
+        // Tạo dữ liệu instruction
+        const instructionData = concatUint8Arrays(
+          addGuardianDiscriminator,
+          guardianIdBytes,
+          bufferToUint8Array(guardianNameLenBuffer),
+          bufferToUint8Array(guardianNameBuffer),
+          recoveryHash,
+          isOwnerByte,
+          hasWebauthn,
+          bufferToUint8Array(webauthnPubkey)
+        );
+        
+        const addGuardianIx = new TransactionInstruction({
+          keys: [
+            { pubkey: multisigPubkey, isSigner: false, isWritable: true },
+            { pubkey: guardianPDA, isSigner: false, isWritable: true },
+            { pubkey: projectFeePayerKeypair.publicKey, isSigner: false, isWritable: false },
+            { pubkey: projectFeePayerKeypair.publicKey, isSigner: true, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }
+          ],
+          programId: PROGRAM_ID,
+          data: Buffer.from(instructionData)
+        });
+        
+        tx.add(addGuardianIx);
+        
+        // Gửi transaction
+        setTransactionStatus(prev => prev + '\nĐang gửi transaction...');
+        const signature = await sendAndConfirmTransaction(
+          connection,
+          tx,
+          [projectFeePayerKeypair],
+          {
+            commitment: 'confirmed',
+            skipPreflight: true,
+          }
+        );
+        
+        // Xác nhận transaction đã thành công
+        setTransactionStatus(prev => prev + '\nĐang xác nhận transaction...');
+        await connection.confirmTransaction(signature, 'confirmed');
+        
+        // Cập nhật trạng thái guardian
+        await updateGuardianStatus(inviteCode, 'completed', signature);
+        
+        // Thông báo kết quả
+        setTransactionStatus(`Guardian đã được thêm thành công vào blockchain!
+- Tên: ${guardianData.guardianName}
+- ID: ${guardianData.guardianId}
+- Địa chỉ: ${guardianPDA.toString()}
+- Signature: ${signature}
+
+Guardian đã sẵn sàng để sử dụng trong ví multisig của bạn.`);
+        
+        // Làm mới danh sách guardian
+        await getExistingGuardianIds();
+      } else {
+        setTransactionStatus('Lỗi: Fee payer không khả dụng');
+      }
+    } catch (error) {
+      console.error("Lỗi khi hoàn tất quá trình đăng ký guardian:", error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setTransactionStatus(`Lỗi khi hoàn tất quá trình đăng ký guardian: ${errorMessage}`);
+    }
+  };
+
   return (
     <div className="App">
-      <header className="App-header">
-        <h1>Moon Wallet Testing Interface</h1>
-        
-        {/* Phần đăng nhập ví, hiển thị khi chưa tạo ví hoặc chưa đăng nhập */}
-        {!multisigAddress && (
-          <div className="login-section">
-            <h2>Ví Moon Wallet</h2>
+      <header className="bg-blue-600 text-white p-4 mb-4">
+        <h1 className="text-2xl font-bold">Moon Wallet - Quản lý Ví Đa Chữ Ký</h1>
+      </header>
+      <div className="container mx-auto p-4 flex flex-col">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="p-4 bg-white rounded shadow">
+            <h2 className="text-xl font-bold mb-4">Quản lý Ví</h2>
             
-            <div className="wallet-actions">
-              <button 
-                onClick={loginToWallet}
-                className="btn btn-primary"
-                disabled={isLoggingIn}
-              >
-                {isLoggingIn ? 'Đang đăng nhập...' : 'Đăng nhập bằng WebAuthn'}
-              </button>
+            {/* Form để tạo ví mới */}
+            <div className="mb-4">
+              <input
+                type="text"
+                value={recoveryPhrase}
+                onChange={(e) => setRecoveryPhrase(e.target.value)}
+                placeholder="Recovery Phrase (tối thiểu 8 ký tự)"
+                className="w-full p-2 border rounded mb-2"
+              />
+              <div className="flex space-x-2">
+                <button 
+                  onClick={createWalletWithWebAuthn} 
+                  className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                >
+                  Tạo Ví
+                </button>
+                <button 
+                  onClick={loginToWallet} 
+                  className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+                >
+                  Đăng Nhập
+                </button>
+                <button 
+                  onClick={checkGuardiansInDatabase} 
+                  className="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600"
+                >
+                  Kiểm Tra Guardians
+                </button>
+              </div>
+            </div>
+            
+            {/* Phần đăng nhập ví, hiển thị khi chưa tạo ví hoặc chưa đăng nhập */}
+            {!multisigAddress && (
+              <div className="login-section">
+                <h2>Ví Moon Wallet</h2>
+                
+                <div className="wallet-actions">
+                  <button 
+                    onClick={loginToWallet}
+                    className="btn btn-primary"
+                    disabled={isLoggingIn}
+                  >
+                    {isLoggingIn ? 'Đang đăng nhập...' : 'Đăng nhập bằng WebAuthn'}
+                  </button>
+                  
+                  <button 
+                    onClick={() => {setShowLoginForm(false)}}
+                    className="btn btn-success"
+                  >
+                    Tạo ví mới
+                  </button>
+                </div>
+              </div>
+            )}
+            
+            <div className="connection-info">
+              <h2>Thông tin kết nối</h2>
+              <p>Đang kết nối tới: <strong>{RPC_ENDPOINT}</strong></p>
+              <p>Program ID: <strong>{PROGRAM_ID_STRING}</strong></p>
+              <p>Fee Payer: <strong>{projectFeePayerKeypair ? projectFeePayerKeypair.publicKey.toString() : 'Chưa khởi tạo'}</strong></p>
+              <p>Số dư Fee Payer: <strong>{isLoadingFeePayerBalance ? 'Đang tải...' : `${feePayerBalance} SOL`}</strong></p>
+              <div className="button-row">
+                <button 
+                  onClick={requestAirdrop}
+                  disabled={isLoadingFeePayerBalance}
+                >
+                  Airdrop 2 SOL cho Fee Payer
+                </button>
+              </div>
+              <div className="info-text">
+                Fee payer của dự án cần có SOL để trả phí giao dịch. Nếu số dư = 0, vui lòng Airdrop trước khi tạo ví hoặc thêm guardian.
+              </div>
+            </div>
+            
+            <div className="wallet-info">
+              <h2>Thông tin ví Moon Wallet</h2>
+              <p>Multisig PDA: {multisigAddress ? multisigAddress.toString() : 'Chưa tạo ví'}</p>
+              <p>Số dư Ví: <strong>{isLoadingPdaBalance ? 'Đang tải...' : `${pdaBalance} SOL`}</strong></p>
+              <p>Guardian PDA: {guardianPDA ? guardianPDA.toString() : 'Chưa có guardian'}</p>
+              <div className="button-row">
+                <button onClick={getWalletInfo}>Xem thông tin ví</button>
+                <div className="guardian-selection">
+                  <select 
+                    value={selectedGuardianId} 
+                    onChange={(e) => setSelectedGuardianId(parseInt(e.target.value))}
+                    style={{ margin: '0 10px', padding: '8px' }}
+                  >
+                    {existingGuardians.map(id => (
+                      <option key={id} value={id}>Guardian ID {id}</option>
+                    ))}
+                  </select>
+                  <button 
+                    onClick={getGuardianInfo}
+                    disabled={!multisigAddress || existingGuardians.length === 0}
+                  >
+                    Xem thông tin guardian
+                  </button>
+                </div>
+                <button 
+                  onClick={() => {
+                    if (multisigAddress) {
+                      loadPdaBalance(multisigAddress);
+                      getExistingGuardianIds();
+                    }
+                  }}
+                  disabled={isLoadingPdaBalance || !multisigAddress}
+                >
+                  Cập nhật dữ liệu
+                </button>
+              </div>
+            </div>
+            
+            <div className="create-wallet-section">
+              <h2>Tạo ví Moon Wallet</h2>
+              
+              <p className="info-text">Dự án sẽ trả phí giao dịch tạo ví. Bạn không cần có SOL.</p>
+              
+              <div className="input-group">
+                <label>Tên ví: </label>
+                <input 
+                  type="text" 
+                  value={walletName} 
+                  onChange={(e) => setWalletName(e.target.value)} 
+                  maxLength={32}
+                  placeholder="Nhập tên cho ví của bạn"
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>Recovery Key: <span className="required">*</span></label>
+                <input 
+                  type="text" 
+                  value={recoveryPhrase} 
+                  onChange={(e) => setRecoveryPhrase(e.target.value)} 
+                  placeholder="Nhập recovery key (ít nhất 8 ký tự)"
+                  style={{width: '300px'}}
+                  required
+                />
+                {recoveryPhrase && recoveryPhrase.length < 8 && (
+                  <p className="error-message">Recovery key phải có ít nhất 8 ký tự</p>
+                )}
+              </div>
+              
+              <div className="input-group">
+                <label>Threshold: </label>
+                <input 
+                  type="number" 
+                  min="1" 
+                  max="8" 
+                  value={threshold} 
+                  onChange={(e) => setThreshold(parseInt(e.target.value))} 
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>Tên Guardian: </label>
+                <input 
+                  type="text" 
+                  value={guardianName} 
+                  onChange={(e) => setGuardianName(e.target.value)} 
+                  maxLength={32}
+                  placeholder="Tên cho guardian đầu tiên (mặc định: Owner)"
+                />
+              </div>
               
               <button 
-                onClick={() => {setShowLoginForm(false)}}
-                className="btn btn-success"
+                onClick={createWalletWithWebAuthn} 
+                disabled={isLoadingBalance || !recoveryPhrase || recoveryPhrase.length < 8}
+                className="create-wallet-button"
               >
-                Tạo ví mới
+                Tạo ví Moon Wallet
               </button>
-            </div>
-          </div>
-        )}
-        
-        <div className="connection-info">
-          <h2>Thông tin kết nối</h2>
-          <p>Đang kết nối tới: <strong>{RPC_ENDPOINT}</strong></p>
-          <p>Program ID: <strong>{PROGRAM_ID_STRING}</strong></p>
-          <p>Fee Payer: <strong>{projectFeePayerKeypair ? projectFeePayerKeypair.publicKey.toString() : 'Chưa khởi tạo'}</strong></p>
-          <p>Số dư Fee Payer: <strong>{isLoadingFeePayerBalance ? 'Đang tải...' : `${feePayerBalance} SOL`}</strong></p>
-          <div className="button-row">
-            <button 
-              onClick={requestAirdrop}
-              disabled={isLoadingFeePayerBalance}
-            >
-              Airdrop 2 SOL cho Fee Payer
-            </button>
-          </div>
-          <div className="info-text">
-            Fee payer của dự án cần có SOL để trả phí giao dịch. Nếu số dư = 0, vui lòng Airdrop trước khi tạo ví hoặc thêm guardian.
-          </div>
-        </div>
-        
-        <div className="wallet-info">
-          <h2>Thông tin ví Moon Wallet</h2>
-          <p>Multisig PDA: {multisigAddress ? multisigAddress.toString() : 'Chưa tạo ví'}</p>
-          <p>Số dư Ví: <strong>{isLoadingPdaBalance ? 'Đang tải...' : `${pdaBalance} SOL`}</strong></p>
-          <p>Guardian PDA: {guardianPDA ? guardianPDA.toString() : 'Chưa có guardian'}</p>
-          <div className="button-row">
-            <button onClick={getWalletInfo}>Xem thông tin ví</button>
-            <div className="guardian-selection">
-              <select 
-                value={selectedGuardianId} 
-                onChange={(e) => setSelectedGuardianId(parseInt(e.target.value))}
-                style={{ margin: '0 10px', padding: '8px' }}
-              >
-                {existingGuardians.map(id => (
-                  <option key={id} value={id}>Guardian ID {id}</option>
-                ))}
-              </select>
-              <button 
-                onClick={getGuardianInfo}
-                disabled={!multisigAddress || existingGuardians.length === 0}
-              >
-                Xem thông tin guardian
-              </button>
-            </div>
-            <button 
-              onClick={() => {
-                if (multisigAddress) {
-                  loadPdaBalance(multisigAddress);
-                  getExistingGuardianIds();
-                }
-              }}
-              disabled={isLoadingPdaBalance || !multisigAddress}
-            >
-              Cập nhật dữ liệu
-            </button>
-          </div>
-        </div>
-        
-        <div className="create-wallet-section">
-          <h2>Tạo ví Moon Wallet</h2>
-          
-          <p className="info-text">Dự án sẽ trả phí giao dịch tạo ví. Bạn không cần có SOL.</p>
-          
-          <div className="input-group">
-            <label>Tên ví: </label>
-            <input 
-              type="text" 
-              value={walletName} 
-              onChange={(e) => setWalletName(e.target.value)} 
-              maxLength={32}
-              placeholder="Nhập tên cho ví của bạn"
-            />
-          </div>
-          
-          <div className="input-group">
-            <label>Recovery Key: <span className="required">*</span></label>
-            <input 
-              type="text" 
-              value={recoveryPhrase} 
-              onChange={(e) => setRecoveryPhrase(e.target.value)} 
-              placeholder="Nhập recovery key (ít nhất 8 ký tự)"
-              style={{width: '300px'}}
-              required
-            />
-            {recoveryPhrase && recoveryPhrase.length < 8 && (
-              <p className="error-message">Recovery key phải có ít nhất 8 ký tự</p>
-            )}
-          </div>
-          
-          <div className="input-group">
-            <label>Threshold: </label>
-            <input 
-              type="number" 
-              min="1" 
-              max="8" 
-              value={threshold} 
-              onChange={(e) => setThreshold(parseInt(e.target.value))} 
-            />
-          </div>
-          
-          <div className="input-group">
-            <label>Tên Guardian: </label>
-            <input 
-              type="text" 
-              value={guardianName} 
-              onChange={(e) => setGuardianName(e.target.value)} 
-              maxLength={32}
-              placeholder="Tên cho guardian đầu tiên (mặc định: Owner)"
-            />
-          </div>
-          
-          <button 
-            onClick={createWalletWithWebAuthn} 
-            disabled={isLoadingBalance || !recoveryPhrase || recoveryPhrase.length < 8}
-            className="create-wallet-button"
-          >
-            Tạo ví Moon Wallet
-          </button>
-          
-          {credentialId && (
-            <div className="credential-info">
-              <p>Credential ID: {credentialId.slice(0, 10)}...</p>
-            </div>
-          )}
-        </div>
-        
-        {/* Thêm phần UI cho việc thêm guardian mới */}
-        {multisigAddress && (
-          <div className="add-guardian-section">
-            <h2>Quản lý Guardian</h2>
-            
-            <div className="existing-guardians">
-              <p><strong>Các Guardian hiện có:</strong></p>
-              {existingGuardians.length > 0 ? (
-                <ul className="guardian-list">
-                  {existingGuardians.map(id => (
-                    <li key={id} className="guardian-item">
-                      Guardian ID {id}
-                      {id === 1 && " (Owner)"}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p>Chưa có Guardian nào</p>
+              
+              {credentialId && (
+                <div className="credential-info">
+                  <p>Credential ID: {credentialId.slice(0, 10)}...</p>
+                </div>
               )}
             </div>
-
-            <div className="guardian-actions">
-              <button 
-                onClick={() => {
-                  setShowAddGuardianForm(!showAddGuardianForm);
-                  if (!showAddGuardianForm) {
-                    getExistingGuardianIds();
-                  }
-                }}
-                className="toggle-button"
-              >
-                {showAddGuardianForm ? 'Ẩn form thêm guardian' : 'Thêm guardian mới'}
-              </button>
-              
-              <button 
-                onClick={getExistingGuardianIds}
-                className="update-button"
-              >
-                Cập nhật danh sách guardian
-              </button>
-            </div>
             
-            <div className="guardian-test-actions mt-3" style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-              <button onClick={() => testGuardianInfo(1)} className="btn btn-sm btn-info">Kiểm tra Guardian 1</button>
-              <button onClick={() => testGuardianInfo(2)} className="btn btn-sm btn-info">Kiểm tra Guardian 2</button>
-              <button onClick={() => testGuardianInfo(3)} className="btn btn-sm btn-info">Kiểm tra Guardian 3</button>
-            </div>
-            
-            {showAddGuardianForm && (
-              <div className="guardian-form">
-                <p className="info-text">Dự án sẽ trả phí giao dịch thêm guardian. Bạn không cần có SOL.</p>
-                <p className="info-text warning"><strong>Lưu ý:</strong> Quá trình thêm guardian sẽ yêu cầu tạo khóa xác thực WebAuthn mới. Bạn sẽ thấy hộp thoại yêu cầu xác thực sau khi nhấn "Thêm Guardian".</p>
+            {/* Thêm phần UI cho việc thêm guardian mới */}
+            {multisigAddress && (
+              <div className="add-guardian-section">
+                <h2>Quản lý Guardian</h2>
                 
-                <div className="input-group">
-                  <label>Tên Guardian: </label>
-                  <input 
-                    type="text" 
-                    value={newGuardianName} 
-                    onChange={(e) => setNewGuardianName(e.target.value)} 
-                    maxLength={32}
-                    placeholder="Nhập tên cho guardian mới"
-                  />
-                </div>
-                
-                <div className="input-group">
-                  <label>Recovery Key: <span className="required">*</span></label>
-                  <input 
-                    type="text" 
-                    value={newRecoveryPhrase} 
-                    onChange={(e) => setNewRecoveryPhrase(e.target.value)} 
-                    placeholder="Nhập recovery key (ít nhất 8 ký tự)"
-                    style={{width: '300px'}}
-                    required
-                  />
-                  {newRecoveryPhrase && newRecoveryPhrase.length < 8 && (
-                    <p className="error-message">Recovery key phải có ít nhất 8 ký tự</p>
+                <div className="existing-guardians">
+                  <p><strong>Các Guardian hiện có:</strong></p>
+                  {existingGuardians.length > 0 ? (
+                    <ul className="guardian-list">
+                      {existingGuardians.map(id => (
+                        <li key={id} className="guardian-item">
+                          Guardian ID {id}
+                          {id === 1 && " (Owner)"}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>Chưa có Guardian nào</p>
                   )}
                 </div>
+
+                <div className="guardian-actions">
+                  <button 
+                    onClick={generateGuardianInvite}
+                    className="primary-button"
+                  >
+                    Tạo lời mời Guardian mới
+                  </button>
+                  
+                  <button 
+                    onClick={() => {
+                      setShowInviteInput(!showInviteInput);
+                      loadPendingInvites();
+                    }}
+                    className="toggle-button"
+                  >
+                    {showInviteInput ? 'Ẩn form nhập mã mời' : 'Hoàn tất đăng ký Guardian'}
+                  </button>
+                  
+                  <button 
+                    onClick={getExistingGuardianIds}
+                    className="update-button"
+                  >
+                    Cập nhật danh sách guardian
+                  </button>
+                </div>
                 
+                {/* Form tạo mã mời */}
+                {showQRCode && inviteLink && (
+                  <div className="invite-container">
+                    <h3>Link mời Guardian</h3>
+                    <div className="qr-code">
+                      <QRCodeSVG 
+                        value={inviteLink}
+                        size={200}
+                        level="H"
+                        includeMargin={true}
+                      />
+                    </div>
+                    <div className="invite-info">
+                      <p>Link mời: <a href={inviteLink} target="_blank" rel="noopener noreferrer">{inviteLink}</a></p>
+                      <p>Mã mời: <strong>{inviteCode}</strong></p>
+                      <p className="note">Gửi link này cho người bạn muốn thêm làm guardian. Họ sẽ hoàn thành quá trình đăng ký và sau đó bạn có thể hoàn tất việc thêm guardian bằng mã mời.</p>
+                    </div>
+                    <button onClick={() => {
+                      setShowQRCode(false);
+                      setInviteLink('');
+                      setInviteCode('');
+                    }}>Đóng</button>
+                  </div>
+                )}
+                
+                {/* Form nhập mã mời đã đăng ký */}
+                {showInviteInput && (
+                  <div className="invite-input-container">
+                    <h3>Hoàn tất đăng ký Guardian</h3>
+                    
+                    {pendingInvites.length > 0 ? (
+                      <div className="pending-invites">
+                        <p>Các mã mời đang chờ xử lý:</p>
+                        <div className="invite-codes">
+                          {pendingInvites.map(code => (
+                            <div key={code} className="invite-code-item">
+                              <span className="code">{code}</span>
+                              <button 
+                                onClick={() => completeGuardianSetup(code)}
+                                className="complete-button"
+                              >
+                                Hoàn tất
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p>Không có mã mời nào đang chờ xử lý.</p>
+                    )}
+                    
+                    <div className="manual-input">
+                      <p>Hoặc nhập mã mời thủ công:</p>
+                      <input 
+                        type="text" 
+                        placeholder="Nhập mã mời" 
+                        value={inviteCode}
+                        onChange={(e) => setInviteCode(e.target.value)}
+                        className="invite-input"
+                      />
+                      <button 
+                        onClick={() => inviteCode && completeGuardianSetup(inviteCode)}
+                        disabled={!inviteCode}
+                        className="complete-button"
+                      >
+                        Hoàn tất đăng ký
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
+                <div className="guardian-test-actions mt-3" style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+                  <button onClick={() => testGuardianInfo(1)} className="btn btn-sm btn-info">Kiểm tra Guardian 1</button>
+                  <button onClick={() => testGuardianInfo(2)} className="btn btn-sm btn-info">Kiểm tra Guardian 2</button>
+                  <button onClick={() => testGuardianInfo(3)} className="btn btn-sm btn-info">Kiểm tra Guardian 3</button>
+                </div>
+              </div>
+            )}
+            
+            {/* Chức năng nạp tiền vào ví multisig */}
+            <div className="card mb-3">
+              <div className="card-header bg-primary text-white">
+                <h5 className="mb-0">Nạp tiền vào ví Multisig</h5>
+              </div>
+              <div className="card-body">
+                <div className="form-group mb-3">
+                  <label htmlFor="depositAmount">Số lượng SOL:</label>
+                  <input
+                    type="number"
+                    id="depositAmount"
+                    className="form-control"
+                    step="0.01"
+                    min="0.01"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(parseFloat(e.target.value))}
+                    placeholder="Nhập số lượng SOL"
+                  />
+                </div>
                 <button 
-                  onClick={addNewGuardian} 
-                  disabled={isLoadingBalance || !newGuardianName || !newRecoveryPhrase || newRecoveryPhrase.length < 8}
-                  className="add-guardian-button"
+                  className="btn btn-primary w-100"
+                  onClick={depositToMultisig}
+                  disabled={!multisigAddress}
                 >
-                  Thêm Guardian với WebAuthn
+                  Nạp tiền vào ví
                 </button>
+              </div>
+            </div>
+            
+            {/* Chức năng rút tiền từ ví multisig */}
+            <div className="card mb-3">
+              <div className="card-header bg-primary text-white">
+                <h5 className="mb-0">Rút tiền từ ví Multisig</h5>
+              </div>
+              <div className="card-body">
+                <div className="form-group mb-3">
+                  <label htmlFor="recipientAddress">Địa chỉ người nhận:</label>
+                  <input
+                    type="text"
+                    id="recipientAddress"
+                    className="form-control"
+                    value={recipientAddress}
+                    onChange={(e) => setRecipientAddress(e.target.value)}
+                    placeholder="Nhập địa chỉ ví người nhận"
+                  />
+                </div>
+                <div className="form-group mb-3">
+                  <label htmlFor="withdrawAmount">Số lượng SOL:</label>
+                  <input
+                    type="number"
+                    id="withdrawAmount"
+                    className="form-control"
+                    step="0.01"
+                    min="0.01"
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(parseFloat(e.target.value))}
+                    placeholder="Nhập số lượng SOL"
+                  />
+                </div>
+                <button 
+                  className="btn btn-primary w-100"
+                  onClick={withdrawFromMultisig}
+                  disabled={!multisigAddress}
+                >
+                  Rút tiền từ ví
+                </button>
+              </div>
+            </div>
+            
+            {transactionStatus && (
+              <div className="transaction-status">
+                <h3>Trạng thái giao dịch</h3>
+                <p style={{whiteSpace: 'pre-line'}}>{transactionStatus}</p>
               </div>
             )}
           </div>
-        )}
-        
-        {/* Chức năng nạp tiền vào ví multisig */}
-        <div className="card mb-3">
-          <div className="card-header bg-primary text-white">
-            <h5 className="mb-0">Nạp tiền vào ví Multisig</h5>
-          </div>
-          <div className="card-body">
-            <div className="form-group mb-3">
-              <label htmlFor="depositAmount">Số lượng SOL:</label>
-              <input
-                type="number"
-                id="depositAmount"
-                className="form-control"
-                step="0.01"
-                min="0.01"
-                value={depositAmount}
-                onChange={(e) => setDepositAmount(parseFloat(e.target.value))}
-                placeholder="Nhập số lượng SOL"
-              />
-            </div>
-            <button 
-              className="btn btn-primary w-100"
-              onClick={depositToMultisig}
-              disabled={!multisigAddress}
-            >
-              Nạp tiền vào ví
-            </button>
-          </div>
         </div>
-        
-        {/* Chức năng rút tiền từ ví multisig */}
-        <div className="card mb-3">
-          <div className="card-header bg-primary text-white">
-            <h5 className="mb-0">Rút tiền từ ví Multisig</h5>
-          </div>
-          <div className="card-body">
-            <div className="form-group mb-3">
-              <label htmlFor="recipientAddress">Địa chỉ người nhận:</label>
-              <input
-                type="text"
-                id="recipientAddress"
-                className="form-control"
-                value={recipientAddress}
-                onChange={(e) => setRecipientAddress(e.target.value)}
-                placeholder="Nhập địa chỉ ví người nhận"
-              />
-            </div>
-            <div className="form-group mb-3">
-              <label htmlFor="withdrawAmount">Số lượng SOL:</label>
-              <input
-                type="number"
-                id="withdrawAmount"
-                className="form-control"
-                step="0.01"
-                min="0.01"
-                value={withdrawAmount}
-                onChange={(e) => setWithdrawAmount(parseFloat(e.target.value))}
-                placeholder="Nhập số lượng SOL"
-              />
-            </div>
-            <button 
-              className="btn btn-primary w-100"
-              onClick={withdrawFromMultisig}
-              disabled={!multisigAddress}
-            >
-              Rút tiền từ ví
-            </button>
-          </div>
-        </div>
-        
-        {transactionStatus && (
-          <div className="transaction-status">
-            <h3>Trạng thái giao dịch</h3>
-            <p style={{whiteSpace: 'pre-line'}}>{transactionStatus}</p>
-          </div>
-        )}
-      </header>
+      </div>
     </div>
   );
 }

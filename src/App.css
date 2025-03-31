@@ -440,3 +440,172 @@ pre {
   text-decoration: underline;
   transform: none;
 }
+
+/* Thêm CSS cho trang Guardian Signup */
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: #f9f9f9;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  margin-top: 30px;
+}
+
+.info-box {
+  background-color: #e7f3ff;
+  padding: 15px;
+  border-radius: 5px;
+  margin-bottom: 20px;
+  border-left: 5px solid #4a90e2;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: bold;
+}
+
+.input-field {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 16px;
+}
+
+.required {
+  color: #ff4d4f;
+}
+
+.action-button {
+  background-color: #4a90e2;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.action-button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
+.status-message {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #f8f8f8;
+  border-left: 4px solid #4a90e2;
+  white-space: pre-line;
+}
+
+.error-message {
+  color: #ff4d4f;
+  padding: 10px;
+  background-color: #fff1f0;
+  border: 1px solid #ffccc7;
+  border-radius: 4px;
+  margin-top: 5px;
+}
+
+.success-message {
+  background-color: #f6ffed;
+  border: 1px solid #b7eb8f;
+  padding: 20px;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.note {
+  margin-top: 30px;
+  padding: 15px;
+  background-color: #fffbe6;
+  border-radius: 4px;
+  border-left: 4px solid #faad14;
+}
+
+/* Styles cho QR code và invite container */
+.invite-container {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 15px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  margin-top: 20px;
+  text-align: center;
+}
+
+.qr-code {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0;
+}
+
+.invite-info {
+  margin-top: 15px;
+  text-align: left;
+}
+
+.invite-info .note {
+  font-size: 14px;
+  margin-top: 10px;
+}
+
+.invite-input-container {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 15px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  margin-top: 20px;
+}
+
+.pending-invites {
+  margin-top: 15px;
+}
+
+.invite-codes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.invite-code-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background-color: #f0f7ff;
+  border-radius: 4px;
+}
+
+.manual-input {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #eee;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.invite-input {
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 16px;
+  margin-right: 10px;
+}
+
+.complete-button {
+  background-color: #52c41a;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+}

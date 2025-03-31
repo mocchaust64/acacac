@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Cho phép đọc thông tin invitation qua inviteCode
+    match /invitations_lookup/{inviteCode} {
+      allow read: if true;
+    }
+    
+    // Cho phép đọc invitation nếu truy cập đúng ID
+    match /invitations/{inviteId} {
+      allow read: if true;
+    }
+    
+    // Cho phép đọc/ghi guardian data theo inviteCode
+    match /guardians/{inviteCode} {
+      allow read, write: if true;
+    }
+  }
+} 
