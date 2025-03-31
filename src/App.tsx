@@ -1541,15 +1541,13 @@ function App() {
       
       // Sinh guardian ID mới không bị trùng
       const newGuardianId = generateNewGuardianId(existingIds);
-      console.log("Đã tạo guardian ID mới:", newGuardianId);
       
       // Tạo mã ngẫu nhiên cho link mời
       const inviteCode = generateRandomCode(8);
-      console.log("Đã tạo mã mời:", inviteCode);
       
-      // Tạo link mời
-      const inviteLink = `${window.location.origin}/#/guardian-signup/${inviteCode}`;
-      console.log("Link mời được tạo:", inviteLink);
+      // Tạo link mời với URL ngrok từ biến môi trường hoặc sử dụng địa chỉ hiện tại
+      const ngrokUrl = process.env.REACT_APP_NGROK_URL || window.location.origin;
+      const inviteLink = `${ngrokUrl}/#/guardian-signup/${inviteCode}`;
       
       // Hiển thị link (đặt state trước khi lưu vào Firebase)
       setInviteCode(inviteCode);
@@ -1557,7 +1555,6 @@ function App() {
       setShowQRCode(true);
       
       // Lưu thông tin vào Firebase
-      console.log("Đang lưu vào Firebase...");
       try {
         await saveInvitation({
           multisigAddress: multisigAddress.toString(),
@@ -1566,7 +1563,6 @@ function App() {
           status: 'pending',
           ownerId: projectFeePayerKeypair?.publicKey.toString() || ''
         });
-        console.log("Đã lưu vào Firebase thành công");
       } catch (error) {
         console.error("Lỗi khi lưu vào Firebase:", error);
         // Hiển thị lỗi nhưng vẫn tiếp tục hiển thị link mời
