@@ -10,7 +10,8 @@ import {
   getInvitation, 
   getGuardianData, 
   updateGuardianStatus,
-  getPendingInvites 
+  getPendingInvites,
+  deleteGuardianData
 } from './firebase/guardianService';
 import { getWalletByCredentialId } from './firebase/webAuthnService';
 
@@ -1614,26 +1615,28 @@ function App() {
   // Tải danh sách mã mời đang chờ
   const loadPendingInvites = async () => {
     try {
-      if (!projectFeePayerKeypair) return;
+      if (!projectFeePayerKeypair || !multisigAddress) return;
       
       const ownerId = projectFeePayerKeypair.publicKey.toString();
-      const invitesList = await getPendingInvites(ownerId);
+      // Chỉ lọc guardian của chính ví multisig hiện tại
+      const multisigAddressStr = multisigAddress.toString();
+      const invitesList = await getPendingInvites(ownerId, multisigAddressStr);
       setPendingInvites(invitesList);
       
       if (invitesList.length > 0) {
-        console.log(`Tìm thấy ${invitesList.length} guardian đang chờ hoàn tất. Mã mời: ${invitesList.join(', ')}`);
+        console.log(`Tìm thấy ${invitesList.length} guardian đang chờ hoàn tất cho ví ${multisigAddressStr}. Mã mời: ${invitesList.join(', ')}`);
       }
     } catch (error) {
       console.error("Lỗi khi tải danh sách mã mời:", error);
     }
   };
-  
-  // Load danh sách mã mời khi component được mount và mỗi khi projectFeePayerKeypair thay đổi
+
+  // Load danh sách mã mời khi component được mount và mỗi khi projectFeePayerKeypair hoặc multisigAddress thay đổi
   useEffect(() => {
-    if (projectFeePayerKeypair) {
+    if (projectFeePayerKeypair && multisigAddress) {
       loadPendingInvites();
     }
-  }, [projectFeePayerKeypair]);
+  }, [projectFeePayerKeypair, multisigAddress]);
 
   // Hàm để lấy thông tin guardian đã đăng ký
   const fetchGuardianDataFromDatabase = async (inviteCode: string) => {
@@ -1775,8 +1778,43 @@ function App() {
         `Signature: ${addGuardianSignature}`
       );
       
-      // Cập nhật danh sách guardian
+      // Xóa dữ liệu guardian từ database sau khi hoàn tất
+      setTransactionStatus(prev => prev + '\n\nĐang xóa dữ liệu guardian từ database...');
+      console.log(`Bắt đầu xóa dữ liệu guardian với mã mời: ${inviteCode}`);
+      const deleteResult = await deleteGuardianData(inviteCode);
+      
+      if (deleteResult) {
+        console.log(`✅ ĐÃ XÓA THÀNH CÔNG dữ liệu guardian, invitation và lookup với mã mời: ${inviteCode}`);
+        
+        // Cập nhật thông báo thành công rõ ràng hơn
+        setTransactionStatus(`✅ HOÀN TẤT THÀNH CÔNG!
+        
+        Guardian "${guardianData.guardianName}" (ID: ${guardianData.guardianId}) đã được thêm thành công vào ví.
+        
+        Địa chỉ Guardian: ${guardianPDA.toString()}
+        Signature: ${addGuardianSignature}
+        
+        ✅ Dữ liệu đã được xóa khỏi database để bảo vệ quyền riêng tư.
+        
+        ✅ Guardian hiện đã sẵn sàng sử dụng và đã được ẩn khỏi danh sách chờ.`);
+        
+        // Bỏ mã mời đã sử dụng khỏi danh sách
+        setPendingInvites(prev => prev.filter(code => code !== inviteCode));
+        
+        // Không đóng form để người dùng có thể tiếp tục thêm guardian khác
+        /* 
+        if (pendingInvites.length <= 1) {
+          setShowInviteInput(false);
+        }
+        */
+      } else {
+        console.error(`❌ KHÔNG THỂ XÓA dữ liệu guardian với mã mời: ${inviteCode}`);
+        setTransactionStatus(prev => prev + '\n❌ Không thể xóa dữ liệu guardian từ database.');
+      }
+      
+      // Cập nhật danh sách guardian và load lại danh sách mã mời
       await getExistingGuardianIds();
+      await loadPendingInvites();
       
       // Cập nhật số dư của ví PDA
       await loadPdaBalance(multisigPDA);
@@ -1791,19 +1829,20 @@ function App() {
     try {
       setTransactionStatus('Đang kiểm tra dữ liệu guardians từ Firestore...');
       
-      if (!projectFeePayerKeypair) {
-        setTransactionStatus('Không tìm thấy thông tin fee payer.');
+      if (!projectFeePayerKeypair || !multisigAddress) {
+        setTransactionStatus('Cần có thông tin fee payer và multisig address để kiểm tra.');
         return;
       }
       
       const ownerId = projectFeePayerKeypair.publicKey.toString();
+      const multisigAddressStr = multisigAddress.toString();
       
-      // Lấy danh sách invitations đang chờ
-      const pendingInvites = await getPendingInvites(ownerId);
-      console.log("Danh sách mã mời đang chờ:", pendingInvites);
+      // Lấy danh sách invitations đang chờ CHỈ của ví hiện tại
+      const pendingInvites = await getPendingInvites(ownerId, multisigAddressStr);
+      console.log(`Danh sách mã mời đang chờ cho ví ${multisigAddressStr}:`, pendingInvites);
       
       if (pendingInvites.length === 0) {
-        setTransactionStatus('Không tìm thấy mã mời nào đang chờ xử lý.');
+        setTransactionStatus(`Không tìm thấy mã mời nào đang chờ xử lý cho ví ${multisigAddressStr}.`);
         return;
       }
       
@@ -1960,8 +1999,48 @@ function App() {
 
 Guardian đã sẵn sàng để sử dụng trong ví multisig của bạn.`);
         
-        // Làm mới danh sách guardian
+        // Xóa dữ liệu guardian từ database sau khi hoàn tất
+        setTransactionStatus(prev => prev + '\n\nĐang xóa dữ liệu guardian từ database...');
+        console.log(`Bắt đầu xóa dữ liệu guardian với mã mời: ${inviteCode}`);
+        const deleteResult = await deleteGuardianData(inviteCode);
+        
+        if (deleteResult) {
+          console.log(`✅ ĐÃ XÓA THÀNH CÔNG dữ liệu guardian, invitation và lookup với mã mời: ${inviteCode}`);
+          
+          // Cập nhật thông báo thành công rõ ràng hơn
+          setTransactionStatus(`✅ HOÀN TẤT THÀNH CÔNG!
+          
+          Guardian "${guardianData.guardianName}" (ID: ${guardianData.guardianId}) đã được thêm thành công vào ví.
+          
+          Địa chỉ Guardian: ${guardianPDA.toString()}
+          Signature: ${signature}
+          
+          ✅ Dữ liệu đã được xóa khỏi database để bảo vệ quyền riêng tư.
+          
+          ✅ Guardian hiện đã sẵn sàng sử dụng và đã được ẩn khỏi danh sách chờ.`);
+          
+          // Bỏ mã mời đã sử dụng khỏi danh sách
+          setPendingInvites(prev => prev.filter(code => code !== inviteCode));
+          
+          // Không đóng form sau khi hoàn tất để người dùng có thể tiếp tục thêm guardian khác
+          /* 
+          if (pendingInvites.length <= 1) {
+            setShowInviteInput(false);
+          }
+          */
+        } else {
+          console.error(`❌ KHÔNG THỂ XÓA dữ liệu guardian với mã mời: ${inviteCode}`);
+          setTransactionStatus(prev => prev + '\n❌ Không thể xóa dữ liệu guardian từ database.');
+        }
+        
+        // Làm mới danh sách guardian và cập nhật UI
         await getExistingGuardianIds();
+        await loadPendingInvites();
+        
+        // Cập nhật số dư của ví
+        if (multisigAddress) {
+          await loadPdaBalance(multisigAddress);
+        }
       } else {
         setTransactionStatus('Lỗi: Fee payer không khả dụng');
       }
