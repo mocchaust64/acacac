@@ -12,6 +12,7 @@ import {
   updateGuardianStatus,
   getPendingInvites 
 } from './firebase/guardianService';
+import { getWalletByCredentialId } from './firebase/webAuthnService';
 
 // Lấy các biến môi trường hoặc sử dụng giá trị mặc định
 const RPC_ENDPOINT = process.env.REACT_APP_RPC_ENDPOINT || 'http://127.0.0.1:8899'; // Localhost validator
@@ -1459,47 +1460,76 @@ function App() {
         // Lấy thông tin credential từ phản hồi
         const credentialRawData = assertionResult.rawId;
         
-        // Chuyển rawId thành base64 để sử dụng - giống như cách tạo ví
+        // Chuyển rawId thành hex để sử dụng làm key trong bảng webauthn_credentials
+        const credentialIdHex = Buffer.from(credentialRawData).toString('hex');
+        console.log("Credential ID (hex):", credentialIdHex);
+        
+        // Chuyển rawId thành base64 để sử dụng trong blockchain
         const rawIdBase64 = Buffer.from(credentialRawData).toString('base64');
         console.log("Raw credential ID (base64):", rawIdBase64);
         
-        setTransactionStatus(prev => prev + '\nXác thực WebAuthn thành công!\n\nBước 2: Đang tính toán địa chỉ ví...');
+        setTransactionStatus(prev => prev + '\nXác thực WebAuthn thành công!\n\nBước 2: Đang tìm thông tin ví...');
         
-        // 2. Tính địa chỉ ví từ credential ID với cùng phương thức như khi tạo ví
-        // Sử dụng calculateMultisigPDA đã được cập nhật để hash credential ID
-        const multisigPDA = getMultisigPDA(rawIdBase64);
-        console.log("Multisig PDA:", multisigPDA.toString());
+        // 2. Truy vấn thông tin ví từ bảng webauthn_credentials
+        const credentialMapping = await getWalletByCredentialId(credentialIdHex);
         
-        // Lấy tất cả guardian PDAs
-        const guardianPDAs = getAllGuardianPDAs(multisigPDA, 3); // Giả sử có 3 guardian
-        
-        // 3. Kiểm tra xem ví có tồn tại không
-        const walletAccount = await connection.getAccountInfo(multisigPDA);
-        
-        if (!walletAccount) {
-          console.log("Thử tìm địa chỉ ví đã biết:", "2223661D9wT19eWZqAkicC6P5tAGAwkpjxMgF4EpJbwh");
-          setTransactionStatus(`Không tìm thấy ví với credential này. Có thể bạn cần tạo ví mới.`);
-          setIsLoggingIn(false);
-          return;
+        if (credentialMapping) {
+          // Nếu tìm thấy trong bảng ánh xạ
+          setTransactionStatus(prev => prev + `\nĐã tìm thấy thông tin ví trong database!`);
+          
+          // Chuyển đổi từ chuỗi sang PublicKey
+          const walletAddressFromDB = new PublicKey(credentialMapping.walletAddress);
+          console.log("Wallet address from database:", walletAddressFromDB.toString());
+          
+          // 3. Kiểm tra xem ví có tồn tại trên blockchain không
+          const walletAccount = await connection.getAccountInfo(walletAddressFromDB);
+          
+          if (!walletAccount) {
+            setTransactionStatus(`Ví tìm thấy trong database không tồn tại trên blockchain. Địa chỉ: ${walletAddressFromDB.toString()}`);
+            setIsLoggingIn(false);
+            return;
+          }
+          
+          // 4. Cập nhật state với thông tin ví
+          setMultisigAddress(walletAddressFromDB);
+          setCredentialId(rawIdBase64); // Lưu credential ID gốc
+          
+          setTransactionStatus(prev => prev + `\nĐã tìm thấy ví tại địa chỉ: ${walletAddressFromDB.toString()}\n\nBước 3: Đang tải thông tin ví...`);
+        } else {
+          // Nếu không tìm thấy trong bảng ánh xạ, sử dụng phương pháp tính toán cũ
+          setTransactionStatus(prev => prev + '\nKhông tìm thấy thông tin trong database, đang tính toán địa chỉ ví...');
+          
+          // Tính địa chỉ ví từ credential ID
+          const multisigPDA = getMultisigPDA(rawIdBase64);
+          console.log("Computed Multisig PDA:", multisigPDA.toString());
+          
+          // Kiểm tra xem ví có tồn tại không
+          const walletAccount = await connection.getAccountInfo(multisigPDA);
+          
+          if (!walletAccount) {
+            setTransactionStatus(`Không tìm thấy ví với credential này. Có thể bạn cần tạo ví mới.`);
+            setIsLoggingIn(false);
+            return;
+          }
+          
+          setTransactionStatus(prev => prev + `\nĐã tìm thấy ví tại địa chỉ: ${multisigPDA.toString()}\n\nBước 3: Đang tải thông tin ví...`);
+          
+          // Cập nhật state với thông tin ví
+          setMultisigAddress(multisigPDA);
+          setCredentialId(rawIdBase64); // Lưu credential ID gốc
         }
-        
-        setTransactionStatus(prev => prev + `\nĐã tìm thấy ví tại địa chỉ: ${multisigPDA.toString()}\n\nBước 3: Đang tải thông tin ví...`);
-        
-        // 4. Cập nhật state với thông tin ví
-        setMultisigAddress(multisigPDA);
-        setCredentialId(rawIdBase64); // Lưu credential ID gốc
         
         // 5. Tìm guardian PDA
         await findGuardianAddress(1); // Tìm guardian chính (owner)
         
         // 6. Tải số dư và danh sách guardian
-        await loadPdaBalance(multisigPDA);
+        await loadPdaBalance(multisigAddress!);
         await getExistingGuardianIds();
         
         // 7. Hoàn thành đăng nhập
         setIsLoggedIn(true);
         setIsLoggingIn(false);
-        setTransactionStatus(`Đăng nhập thành công!\n\nĐịa chỉ ví: ${multisigPDA.toString()}\nSố guardian: ${existingGuardians.length}`);
+        setTransactionStatus(`Đăng nhập thành công!\n\nĐịa chỉ ví: ${multisigAddress!.toString()}\nSố guardian: ${existingGuardians.length}`);
         
         // 8. Ẩn form đăng nhập
         setShowLoginForm(false);

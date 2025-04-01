@@ -6,6 +6,7 @@ import '../App.css';
 import { createWebAuthnCredential } from '../utils/webauthnUtils';
 import { compressPublicKey } from '../utils/bufferUtils';
 import { getInvitation, saveGuardianData, InviteData } from '../firebase/guardianService';
+import { saveWebAuthnCredentialMapping } from '../firebase/webAuthnService';
 
 // Hàm hash recovery phrase
 const hashRecoveryPhrase = async (phrase: string): Promise<Uint8Array> => {
@@ -107,6 +108,15 @@ const GuardianSignup: React.FC = () => {
         webauthnPublicKey: Array.from(new Uint8Array(compressedKeyBuffer)), // Lưu khóa đã nén
         status: 'ready'
       });
+      
+      // 5. Lưu ánh xạ WebAuthn credential vào bảng mới
+      await saveWebAuthnCredentialMapping(
+        webAuthnResult.credentialId,
+        inviteData.multisigAddress,
+        Array.from(new Uint8Array(compressedKeyBuffer))
+      );
+      
+      setStatus(prev => prev + '\nĐã lưu ánh xạ WebAuthn credential thành công!');
       
       // Hiển thị thông tin chi tiết và hướng dẫn
       setStatus(`Đăng ký thành công với mã mời ${inviteCode}!
