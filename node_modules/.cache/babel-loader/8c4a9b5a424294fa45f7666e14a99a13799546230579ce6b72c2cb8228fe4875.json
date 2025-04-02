@@ -1,0 +1,1 @@
+{"ast":null,"code":"'use strict';\n\nexports.parse = require('./lib/parse');\nexports.stringify = require('./lib/stringify');","map":null,"metadata":{},"sourceType":"script","externalDependencies":[]}

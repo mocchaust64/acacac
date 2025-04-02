@@ -1,0 +1,1 @@
+{"ast":null,"code":"import { getNativeWebSocket } from \"./utils.js\";\nexport const WebSocket = getNativeWebSocket();\n//# sourceMappingURL=native.js.map","map":null,"metadata":{},"sourceType":"module","externalDependencies":[]}

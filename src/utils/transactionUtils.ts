@@ -309,3 +309,161 @@ export const createAddGuardianTx = (
     throw error;
   }
 };
+
+/**
+ * Tạo transaction cho chức năng chuyển tiền (transfer)
+ * @param multisigPDA PDA của ví đa chữ ký
+ * @param guardian Thông tin guardian có quyền ký
+ * @param destination Địa chỉ đích để chuyển tiền
+ * @param amountLamports Số lượng lamports cần chuyển
+ * @param nonce Nonce giao dịch
+ * @param timestamp Thời gian giao dịch (unix timestamp)
+ * @param message Thông điệp đã ký
+ * @param payer Người trả phí giao dịch
+ */
+export const createTransferTx = (
+  multisigPDA: PublicKey,
+  guardianPDA: PublicKey,
+  destination: PublicKey,
+  amountLamports: number,
+  nonce: number,
+  timestamp: number,
+  message: Uint8Array,
+  payer: PublicKey
+): Transaction => {
+  try {
+    // Discriminator cho verify_and_execute
+    const discriminator = Buffer.from([80, 118, 102, 72, 125, 57, 218, 137]);
+    
+    // Tham số cho 'action' - chuỗi "transfer"
+    const action = "transfer";
+    const actionBuffer = Buffer.from(action);
+    const actionLenBuffer = Buffer.alloc(4);
+    actionLenBuffer.writeUInt32LE(actionBuffer.length, 0);
+    
+    // Encode ActionParams
+    const amountBuffer = Buffer.alloc(9); // 1 byte cho Option + 8 bytes cho u64
+    amountBuffer.writeUInt8(1, 0); // 1 = Some
+    const amountBigInt = BigInt(amountLamports);
+    for (let i = 0; i < 8; i++) {
+      amountBuffer.writeUInt8(Number((amountBigInt >> BigInt(8 * i)) & BigInt(0xFF)), i + 1);
+    }
+    
+    // Encode destination
+    const destinationBuffer = Buffer.alloc(33); // 1 byte cho Option + 32 bytes cho PublicKey
+    destinationBuffer.writeUInt8(1, 0); // 1 = Some
+    Buffer.from(destination.toBuffer()).copy(destinationBuffer, 1);
+    
+    // Encode token_mint (None)
+    const tokenMintBuffer = Buffer.alloc(1);
+    tokenMintBuffer.writeUInt8(0, 0); // 0 = None
+    
+    // Encode nonce (u64, little-endian)
+    const nonceBuffer = Buffer.alloc(8);
+    const nonceBigInt = BigInt(nonce);
+    for (let i = 0; i < 8; i++) {
+      nonceBuffer.writeUInt8(Number((nonceBigInt >> BigInt(8 * i)) & BigInt(0xFF)), i);
+    }
+    
+    // Encode timestamp (i64, little-endian)
+    const timestampBuffer = Buffer.alloc(8);
+    const timestampBigInt = BigInt(timestamp);
+    for (let i = 0; i < 8; i++) {
+      timestampBuffer.writeUInt8(Number((timestampBigInt >> BigInt(8 * i)) & BigInt(0xFF)), i);
+    }
+    
+    // Encode message (vec<u8>)
+    const messageLenBuffer = Buffer.alloc(4);
+    messageLenBuffer.writeUInt32LE(message.length, 0);
+    const messageBuffer = Buffer.from(message);
+    
+    // Nối tất cả buffer lại với nhau
+    const data = Buffer.concat([
+      discriminator,
+      actionLenBuffer,
+      actionBuffer,
+      amountBuffer,
+      destinationBuffer,
+      tokenMintBuffer,
+      nonceBuffer,
+      timestampBuffer,
+      messageLenBuffer,
+      messageBuffer
+    ]);
+    
+    // Tạo instruction verify_and_execute
+    const ix = new TransactionInstruction({
+      keys: [
+        { pubkey: multisigPDA, isSigner: false, isWritable: true },
+        { pubkey: guardianPDA, isSigner: false, isWritable: false },
+        { pubkey: new PublicKey('SysvarC1ock11111111111111111111111111111111'), isSigner: false, isWritable: false },
+        { pubkey: new PublicKey('Sysvar1nstructions1111111111111111111111111'), isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: payer, isSigner: true, isWritable: true },
+        { pubkey: destination, isSigner: false, isWritable: true }
+      ],
+      programId: programID,
+      data
+    });
+    
+    // Tạo transaction mới
+    return new Transaction().add(ix);
+  } catch (error) {
+    console.error("Lỗi khi tạo transaction chuyển tiền:", error);
+    throw error;
+  }
+};
+
+/**
+ * Tạo instruction data cho chương trình Secp256r1SigVerify
+ * @param publicKey Khóa công khai của guardian (nén)
+ * @param signature Chữ ký cho message
+ * @param message Message đã hash bằng SHA-256
+ */
+export const createSecp256r1Instruction = (
+  publicKey: Buffer, 
+  signature: Buffer, 
+  message: Buffer
+): TransactionInstruction => {
+  // Constants
+  const SECP256R1_PROGRAM_ID = new PublicKey('Secp256r1SigVerify1111111111111111111111111');
+  const SIGNATURE_OFFSETS_SERIALIZED_SIZE = 14;
+  const SIGNATURE_OFFSETS_START = 2;
+  const DATA_START = SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
+  const SIGNATURE_SERIALIZED_SIZE = 64;
+  const COMPRESSED_PUBKEY_SERIALIZED_SIZE = 33;
+  
+  // Tính toán tổng kích thước instruction data
+  const totalSize = DATA_START + SIGNATURE_SERIALIZED_SIZE + COMPRESSED_PUBKEY_SERIALIZED_SIZE + message.length;
+  const instructionData = Buffer.alloc(totalSize);
+  
+  // Header
+  instructionData.writeUInt8(1, 0); // num_signatures = 1
+  instructionData.writeUInt8(0, 1); // padding
+  
+  // Offsets
+  const publicKeyOffset = DATA_START;
+  const signatureOffset = publicKeyOffset + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
+  const messageDataOffset = signatureOffset + SIGNATURE_SERIALIZED_SIZE;
+  
+  // Write offsets
+  instructionData.writeUInt16LE(signatureOffset, SIGNATURE_OFFSETS_START);
+  instructionData.writeUInt16LE(0xffff, SIGNATURE_OFFSETS_START + 2);
+  instructionData.writeUInt16LE(publicKeyOffset, SIGNATURE_OFFSETS_START + 4);
+  instructionData.writeUInt16LE(0xffff, SIGNATURE_OFFSETS_START + 6);
+  instructionData.writeUInt16LE(messageDataOffset, SIGNATURE_OFFSETS_START + 8);
+  instructionData.writeUInt16LE(message.length, SIGNATURE_OFFSETS_START + 10);
+  instructionData.writeUInt16LE(0xffff, SIGNATURE_OFFSETS_START + 12);
+  
+  // Write data
+  publicKey.copy(instructionData, publicKeyOffset);
+  signature.copy(instructionData, signatureOffset);
+  message.copy(instructionData, messageDataOffset);
+  
+  // Tạo instruction
+  return new TransactionInstruction({
+    keys: [],
+    programId: SECP256R1_PROGRAM_ID,
+    data: instructionData
+  });
+};

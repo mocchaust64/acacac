@@ -1,0 +1,1 @@
+{"ast":null,"code":"const SemVer = require('../classes/semver');\nconst compare = (a, b, loose) => new SemVer(a, loose).compare(new SemVer(b, loose));\nmodule.exports = compare;","map":null,"metadata":{},"sourceType":"script","externalDependencies":[]}

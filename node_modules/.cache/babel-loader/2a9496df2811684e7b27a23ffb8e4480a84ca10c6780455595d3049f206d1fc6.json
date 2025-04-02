@@ -1,0 +1,1 @@
+{"ast":null,"code":"const SemVer = require('../classes/semver');\nconst patch = (a, loose) => new SemVer(a, loose).patch;\nmodule.exports = patch;","map":null,"metadata":{},"sourceType":"script","externalDependencies":[]}

@@ -1,0 +1,1 @@
+{"ast":null,"code":"const parse = require('./parse');\nconst valid = (version, options) => {\n  const v = parse(version, options);\n  return v ? v.version : null;\n};\nmodule.exports = valid;","map":null,"metadata":{},"sourceType":"script","externalDependencies":[]}

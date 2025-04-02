@@ -1,0 +1,1 @@
+{"ast":null,"code":"const compare = require('./compare');\nconst rcompare = (a, b, loose) => compare(b, a, loose);\nmodule.exports = rcompare;","map":null,"metadata":{},"sourceType":"script","externalDependencies":[]}
