@@ -237,7 +237,7 @@ function App() {
 
   // Tạo keypair mới khi component được mount
   useEffect(() => {
-   
+    
     const projectPayerPrivateKey = convertSecretKeyStringToUint8Array(process.env.REACT_APP_FEE_PAYER_SECRET_KEY);
     
     // Sử dụng keypair cố định cho fee payer
@@ -458,7 +458,7 @@ function App() {
         
         // Chuẩn bị các tham số khác
         const isOwnerByte = new Uint8Array([1]); // true = 1
-    
+        
         const uncompressedKeyBuffer = Buffer.from(result.publicKey, 'hex');
         console.log("WebAuthn key (uncompressed, 65 bytes):", result.publicKey);
         
@@ -1397,7 +1397,7 @@ function App() {
       setInviteCode(inviteCode);
       setInviteLink(inviteLink);
       setShowQRCode(true);
-
+      
       try {
         await saveInvitation({
           multisigAddress: multisigAddress.toString(),

@@ -517,7 +517,7 @@ export const validatePublicKey = (publicKeyHex: string): boolean => {
 /**
  * Lấy WebAuthn assertion từ credential đã có
  */
-export const getWebAuthnAssertion = async (credentialId?: string): Promise<{ 
+export const getWebAuthnAssertion = async (credentialId: string | null, message?: string, allowEmpty: boolean = false): Promise<{ 
   signature: Uint8Array; 
   authenticatorData: Uint8Array;
   clientDataJSON: Uint8Array;
@@ -526,49 +526,140 @@ export const getWebAuthnAssertion = async (credentialId?: string): Promise<{
     throw new Error('WebAuthn không được hỗ trợ trên trình duyệt này');
   }
 
-  // Tạo challenge ngẫu nhiên
-  const challenge = new Uint8Array(32);
-  crypto.getRandomValues(challenge);
+  console.warn("ĐẶC BIỆT QUAN TRỌNG: Nếu bạn đang thấy QR code thay vì danh sách credentials, vui lòng kiểm tra xem có phần mềm nào đang can thiệp vào quá trình xác thực WebAuthn.");
+
+  // Tạo challenge từ message hoặc ngẫu nhiên nếu không có message
+  let challenge: Uint8Array;
+  if (message) {
+    // Nếu có message, sử dụng hash của message làm challenge
+    const msgBytes = new TextEncoder().encode(message);
+    const msgHash = await crypto.subtle.digest('SHA-256', msgBytes);
+    challenge = new Uint8Array(msgHash);
+    console.log("Sử dụng message để tạo challenge:", message);
+  } else {
+    // Nếu không, tạo challenge ngẫu nhiên
+    challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+  }
+  
+  console.log("Challenge:", Buffer.from(challenge).toString('hex'));
   
   // Tạo options cho get assertion
   const options: PublicKeyCredentialRequestOptions = {
     challenge: challenge,
     rpId: window.location.hostname,
-    timeout: 60000,
-    userVerification: 'preferred'
+    timeout: 120000, // Tăng timeout lên 2 phút
+    // Quan trọng: Đặt userVerification thành 'discouraged' để khuyến khích hiển thị danh sách
+    userVerification: 'discouraged'
   };
-  
-  // Nếu có credentialId cụ thể, chỉ cho phép credential đó
-  if (credentialId) {
-    options.allowCredentials = [{
-      id: Buffer.from(credentialId, 'hex'),
-      type: 'public-key',
-    }];
-  } else {
-    // Nếu không, tạo danh sách tất cả credentials đã lưu
+
+  // Cố ý KHÔNG sử dụng allowCredentials để buộc trình duyệt hiển thị danh sách
+  // Nếu allowEmpty=true hoặc credentialId=null, không cần quy định allowCredentials cụ thể
+  if (allowEmpty || credentialId === null || credentialId === '') {
+    // Không đặt options.allowCredentials, để trình duyệt hiển thị tất cả
+    console.log("Yêu cầu hiển thị tất cả credentials trong authenticator");
+  }
+  // Chỉ đặt allowCredentials khi thực sự cần sử dụng credential cụ thể
+  else if (credentialId && !allowEmpty) {
     try {
-      const credentialsListStr = localStorage.getItem('webauthnCredentials');
-      if (credentialsListStr) {
-        const credentialsList = JSON.parse(credentialsListStr);
-        if (Array.isArray(credentialsList) && credentialsList.length > 0) {
-          options.allowCredentials = credentialsList.map(cred => ({
-            id: Buffer.from(cred.credentialId, 'hex'),
-            type: 'public-key' as PublicKeyCredentialType
-          }));
-        }
-      }
+      // Thử chuyển đổi từ hex
+      const credentialIdBuffer = Buffer.from(credentialId, 'hex');
+      options.allowCredentials = [{
+        id: credentialIdBuffer,
+        type: 'public-key',
+        // Thêm tất cả loại transports có thể
+        transports: ['internal', 'hybrid', 'usb', 'ble', 'nfc']
+      }];
+      console.log("Sử dụng credential cụ thể:", credentialId.slice(0, 10) + "...");
     } catch (error) {
-      console.error("Lỗi khi đọc danh sách credentials:", error);
+      console.error("Lỗi khi parse credentialId:", error);
+      // Nếu không chuyển đổi được, không đặt allowCredentials
     }
   }
 
   try {
-    const assertion = await navigator.credentials.get({
-      publicKey: options
-    }) as PublicKeyCredential;
-
-    const response = assertion.response as AuthenticatorAssertionResponse;
+    console.log("Đang hiển thị hộp thoại xác thực WebAuthn...");
     
+    // Hủy các phần tử QR code hiện có
+    const qrElements = document.querySelectorAll('[class*="qr"], [id*="qr"], [class*="QR"], [id*="QR"]');
+    if (qrElements.length > 0) {
+      console.warn(`Phát hiện ${qrElements.length} phần tử QR trên trang, đang ẩn...`);
+      qrElements.forEach(elem => {
+        if (elem instanceof HTMLElement) {
+          elem.style.display = 'none';
+        }
+      });
+    }
+    
+    // QUAN TRỌNG: Đảm bảo không có mediation để trình duyệt quyết định cách hiển thị
+    // Thử cách 1: Không đặt mediation và để trình duyệt tự quyết định
+    console.log("Thử cách 1: Không đặt mediation");
+    try {
+      const assertion = await navigator.credentials.get({
+        publicKey: options
+      }) as PublicKeyCredential;
+      
+      if (assertion) {
+        const response = assertion.response as AuthenticatorAssertionResponse;
+        return {
+          signature: new Uint8Array(response.signature),
+          authenticatorData: new Uint8Array(response.authenticatorData),
+          clientDataJSON: new Uint8Array(response.clientDataJSON)
+        };
+      }
+    } catch (error) {
+      console.error("Cách 1 thất bại:", error);
+    }
+    
+    // Thử cách 2: Sử dụng đặc tính conditional
+    console.log("Thử cách 2: Sử dụng conditional");
+    try {
+      const assertion = await navigator.credentials.get({
+        publicKey: options,
+        // @ts-ignore - Thuộc tính này không có trong TypeScript nhưng được hỗ trợ bởi trình duyệt hiện đại
+        conditional: true 
+      }) as PublicKeyCredential;
+      
+      if (assertion) {
+        const response = assertion.response as AuthenticatorAssertionResponse;
+        return {
+          signature: new Uint8Array(response.signature),
+          authenticatorData: new Uint8Array(response.authenticatorData),
+          clientDataJSON: new Uint8Array(response.clientDataJSON)
+        };
+      }
+    } catch (error) {
+      console.error("Cách 2 thất bại:", error);
+    }
+    
+    // Thử cách 3: Sử dụng mediation: 'optional'
+    console.log("Thử cách 3: Sử dụng mediation: 'optional'");
+    try {
+      const assertion = await navigator.credentials.get({
+        publicKey: options,
+        mediation: 'optional'
+      }) as PublicKeyCredential;
+      
+      if (assertion) {
+        const response = assertion.response as AuthenticatorAssertionResponse;
+        return {
+          signature: new Uint8Array(response.signature),
+          authenticatorData: new Uint8Array(response.authenticatorData),
+          clientDataJSON: new Uint8Array(response.clientDataJSON)
+        };
+      }
+    } catch (error) {
+      console.error("Cách 3 thất bại:", error);
+    }
+    
+    // Thử cách 4: Cuối cùng, dùng mediation: 'required'
+    console.log("Thử cách 4: Sử dụng mediation: 'required'");
+    const assertion = await navigator.credentials.get({
+      publicKey: options,
+      mediation: 'required'
+    }) as PublicKeyCredential;
+    
+    const response = assertion.response as AuthenticatorAssertionResponse;
     return {
       signature: new Uint8Array(response.signature),
       authenticatorData: new Uint8Array(response.authenticatorData),

@@ -24,6 +24,18 @@ interface TransferFormProps {
   pdaBalance?: number;
 }
 
+// Enum cho các trạng thái giao dịch
+enum TransactionStatus {
+  IDLE = 'idle',
+  PREPARING = 'preparing',
+  SIGNING = 'signing',
+  BUILDING_TX = 'building_tx',
+  SUBMITTING = 'submitting',
+  CONFIRMING = 'confirming',
+  SUCCESS = 'success',
+  ERROR = 'error'
+}
+
 export const TransferForm: React.FC<TransferFormProps> = ({
   walletAddress,
   credentialId,
@@ -42,6 +54,8 @@ export const TransferForm: React.FC<TransferFormProps> = ({
   const [success, setSuccess] = useState<string>('');
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [nonce, setNonce] = useState<number>(0);
+  const [txStatus, setTxStatus] = useState<TransactionStatus>(TransactionStatus.IDLE);
+  const [txId, setTxId] = useState<string>('');
   
   // Xóa dòng này vì đã nhận connection từ props
   // const { connection } = useConnection();
@@ -90,6 +104,8 @@ export const TransferForm: React.FC<TransferFormProps> = ({
     // Reset thông báo lỗi và thành công
     setError('');
     setSuccess('');
+    setTxStatus(TransactionStatus.IDLE);
+    setTxId('');
   };
   
   // Xử lý khi nhập số lượng SOL
@@ -101,6 +117,8 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       // Reset thông báo lỗi và thành công
       setError('');
       setSuccess('');
+      setTxStatus(TransactionStatus.IDLE);
+      setTxId('');
     }
   };
   
@@ -111,6 +129,8 @@ export const TransferForm: React.FC<TransferFormProps> = ({
     setIsTransferring(true);
     setError('');
     setSuccess('');
+    setTxStatus(TransactionStatus.PREPARING);
+    setTxId('');
     
     try {
       // Kiểm tra đầu vào
@@ -163,23 +183,23 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       const guardianPDA = await getGuardianPDA(multisigPDA, guardianId);
       console.log('GuardianPDA:', guardianPDA.toBase58());
       
-      // Yêu cầu người dùng ký message bằng WebAuthn
-      setIsTransferring(true); // Hiển thị trạng thái đang ký
+      // Ký message bằng WebAuthn
+      setTxStatus(TransactionStatus.SIGNING);
       
       // Hiển thị thông báo để người dùng biết cần xác thực
       console.log('Đang yêu cầu xác thực WebAuthn...');
-      setError('Vui lòng xác thực bằng WebAuthn (vân tay hoặc Face ID) khi được yêu cầu');
+      setError(''); // Xóa thông báo lỗi trước đó
+      setSuccess('Đang hiển thị danh sách khóa WebAuthn, vui lòng chọn khóa để xác thực giao dịch...');
       
-      // Ký message bằng WebAuthn
-      const assertion = await getWebAuthnAssertion(credentialId);
+      // Thực hiện xác thực WebAuthn - truyền null cho credentialId để hiển thị danh sách tất cả credentials
+      const assertion = await getWebAuthnAssertion(null as any, messageString, true);
       
       if (!assertion) {
         throw new Error('Lỗi khi ký message bằng WebAuthn hoặc người dùng đã hủy xác thực');
       }
       
-      // Xóa thông báo khi đã ký thành công
-      setError('');
       console.log('Đã ký thành công bằng WebAuthn');
+      setSuccess(''); // Xóa thông báo thành công tạm thời
       
       // Sử dụng kết quả từ WebAuthn assertion
       const signature = Buffer.from(assertion.signature);
@@ -200,6 +220,8 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       crypto.getRandomValues(publicKey.slice(1)); // Điền phần còn lại bằng dữ liệu ngẫu nhiên (chỉ để test)
       
       // Tạo instruction secp256r1
+      setTxStatus(TransactionStatus.BUILDING_TX);
+      
       const secp256r1Ix = createSecp256r1Instruction(
         publicKey,
         signature,
@@ -210,7 +232,6 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       const feePayer = web3.Keypair.generate();
       
       // Xin SOL airdrop để trả phí
-      setError('Đang yêu cầu SOL để trả phí giao dịch...');
       const airdropSignature = await connection.requestAirdrop(
         feePayer.publicKey,
         web3.LAMPORTS_PER_SOL / 100 // 0.01 SOL để trả phí
@@ -218,7 +239,6 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       await connection.confirmTransaction(airdropSignature);
       
       // Tạo instruction verify_and_execute
-      setError('Đang xây dựng giao dịch...');
       const transferTx = createTransferTx(
         multisigPDA,
         guardianPDA,
@@ -242,21 +262,24 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       transferTx.sign(feePayer);
       
       // Gửi transaction
-      setError('Đang gửi giao dịch lên blockchain...');
-      const txId = await connection.sendRawTransaction(transferTx.serialize());
-      console.log('Transaction ID:', txId);
+      setTxStatus(TransactionStatus.SUBMITTING);
+      
+      const transactionId = await connection.sendRawTransaction(transferTx.serialize());
+      setTxId(transactionId);
+      console.log('Transaction ID:', transactionId);
       
       // Chờ xác nhận
-      setError('Đang chờ xác nhận giao dịch...');
-      const confirmation = await connection.confirmTransaction(txId);
+      setTxStatus(TransactionStatus.CONFIRMING);
+      
+      const confirmation = await connection.confirmTransaction(transactionId);
       
       if (confirmation.value.err) {
         throw new Error(`Lỗi khi xác nhận giao dịch: ${JSON.stringify(confirmation.value.err)}`);
       }
       
       // Hiển thị thông báo thành công
-      setError('');
-      setSuccess(`Đã chuyển ${amount} SOL đến ${destinationAddress} thành công! ID giao dịch: ${txId}`);
+      setTxStatus(TransactionStatus.SUCCESS);
+      setSuccess(`Đã chuyển ${amount} SOL đến ${destinationAddress} thành công! ID giao dịch: ${transactionId}`);
       setAmount('');
       setDestinationAddress('');
       
@@ -267,6 +290,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
     } catch (error: any) {
       console.error('Lỗi khi chuyển tiền:', error);
       setError(error.message || 'Đã xảy ra lỗi khi chuyển tiền');
+      setTxStatus(TransactionStatus.ERROR);
       
       // Gọi callback lỗi nếu có
       if (onTransferError) {
@@ -274,6 +298,28 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       }
     } finally {
       setIsTransferring(false);
+    }
+  };
+  
+  // Render status message dựa trên txStatus
+  const renderStatusMessage = () => {
+    switch (txStatus) {
+      case TransactionStatus.PREPARING:
+        return 'Đang chuẩn bị giao dịch...';
+      case TransactionStatus.SIGNING:
+        return 'Vui lòng xác thực bằng WebAuthn (vân tay hoặc Face ID) khi được yêu cầu...';
+      case TransactionStatus.BUILDING_TX:
+        return 'Đang xây dựng giao dịch...';
+      case TransactionStatus.SUBMITTING:
+        return 'Đang gửi giao dịch lên blockchain...';
+      case TransactionStatus.CONFIRMING:
+        return 'Đang chờ xác nhận giao dịch...';
+      case TransactionStatus.SUCCESS:
+        return 'Giao dịch thành công!';
+      case TransactionStatus.ERROR:
+        return 'Giao dịch thất bại!';
+      default:
+        return '';
     }
   };
   
@@ -312,17 +358,83 @@ export const TransferForm: React.FC<TransferFormProps> = ({
           />
         </div>
         
-        {error && <div className="error-message">{error}</div>}
         {success && <div className="success-message">{success}</div>}
+        {error && <div className="error-message">{error}</div>}
+        
+        {txStatus !== TransactionStatus.IDLE && (
+          <div className="status-message">
+            <p>{renderStatusMessage()}</p>
+            {txStatus === TransactionStatus.CONFIRMING && (
+              <div className="loading-indicator">Đang xác nhận...</div>
+            )}
+            {txId && (
+              <p className="transaction-id">
+                ID Giao dịch: <a href={`https://explorer.solana.com/tx/${txId}`} target="_blank" rel="noopener noreferrer">{txId.slice(0, 8)}...{txId.slice(-8)}</a>
+              </p>
+            )}
+          </div>
+        )}
         
         <button 
           type="submit" 
           className="primary-button" 
           disabled={isTransferring}
         >
-          {isTransferring ? 'Đang chuyển...' : 'Chuyển SOL'}
+          {isTransferring ? 'Đang xử lý...' : 'Chuyển SOL'}
         </button>
       </form>
+      
+      <style>
+        {`
+          .success-message, .error-message {
+            margin: 12px 0;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: 500;
+          }
+          
+          .success-message {
+            background-color: rgba(0, 200, 83, 0.1);
+            color: #00C853;
+            border: 1px solid #00C853;
+          }
+          
+          .error-message {
+            background-color: rgba(255, 87, 34, 0.1);
+            color: #FF5722;
+            border: 1px solid #FF5722;
+          }
+          
+          .status-message {
+            margin: 12px 0;
+            padding: 10px;
+            background-color: rgba(33, 150, 243, 0.1);
+            border: 1px solid #2196F3;
+            border-radius: 4px;
+            color: #2196F3;
+          }
+          
+          .loading-indicator {
+            margin-top: 8px;
+            font-style: italic;
+          }
+          
+          .transaction-id {
+            margin-top: 8px;
+            word-break: break-all;
+            font-size: 14px;
+          }
+          
+          .transaction-id a {
+            color: #2196F3;
+            text-decoration: none;
+          }
+          
+          .transaction-id a:hover {
+            text-decoration: underline;
+          }
+        `}
+      </style>
     </div>
   );
 }; 
