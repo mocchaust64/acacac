@@ -429,59 +429,71 @@ const convertRawToSPKI = (rawKey: Buffer): ArrayBuffer => {
 // Hàm chuyển đổi chữ ký từ DER sang raw
 const derToRaw = (signature: Buffer): Uint8Array => {
   try {
-    // DER format: 30 + len + 02 + r_len + r + 02 + s_len + s
-    let offset = 2; // Skip 30 + len
+    console.log('Chuyển đổi chữ ký DER sang raw format...');
+    console.log('DER signature length:', signature.length);
+    console.log('DER signature (hex):', signature.toString('hex'));
     
-    // Read r
-    if (signature[offset] !== 0x02) {
-      throw new Error('Định dạng DER không hợp lệ: không tìm thấy marker r');
+    // Kiểm tra format DER
+    if (signature[0] !== 0x30) {
+      throw new Error('Chữ ký không đúng định dạng DER: byte đầu tiên không phải 0x30');
     }
-    offset++; // Skip 02
+    
+    // DER format: 0x30 [total-length] 0x02 [r-length] [r] 0x02 [s-length] [s]
+    let offset = 2; // Skip 0x30 + len
+    
+    // Đọc r
+    if (signature[offset] !== 0x02) {
+      throw new Error('Định dạng DER không hợp lệ: không tìm thấy marker r (0x02)');
+    }
+    offset++; // Skip 0x02
     
     const rLen = signature[offset++];
     let r = signature.slice(offset, offset + rLen);
     offset += rLen;
     
-    // Read s
+    // Đọc s
     if (signature[offset] !== 0x02) {
-      throw new Error('Định dạng DER không hợp lệ: không tìm thấy marker s');
+      throw new Error('Định dạng DER không hợp lệ: không tìm thấy marker s (0x02)');
     }
-    offset++; // Skip 02
+    offset++; // Skip 0x02
     
     const sLen = signature[offset++];
     let s = signature.slice(offset, offset + sLen);
     
-    // Pad r and s to 32 bytes
-    let rPadded, sPadded;
+    console.log('Đã trích xuất r và s từ DER:');
+    console.log('r length:', r.length, 'r (hex):', r.toString('hex'));
+    console.log('s length:', s.length, 's (hex):', s.toString('hex'));
     
-    if (r.length < 32) {
-      const padding = Buffer.alloc(32 - r.length, 0);
-      rPadded = new Uint8Array(32);
-      rPadded.set(new Uint8Array(padding), 0);
-      rPadded.set(new Uint8Array(r), padding.length);
-    } else if (r.length > 32) {
-      rPadded = new Uint8Array(r.buffer, r.byteOffset + r.length - 32, 32);
+    // Chuẩn bị r và s cho định dạng raw (mỗi phần 32 bytes)
+    const rPadded = new Uint8Array(32);
+    const sPadded = new Uint8Array(32);
+    
+    if (r.length <= 32) {
+      // Trường hợp r ngắn hơn 32 bytes, thêm padding
+      rPadded.set(new Uint8Array(r), 32 - r.length);
     } else {
-      rPadded = new Uint8Array(r);
+      // Trường hợp r dài hơn 32 bytes (thường là có byte 0x00 ở đầu), lấy 32 bytes cuối
+      rPadded.set(new Uint8Array(r.slice(r.length - 32)));
     }
     
-    if (s.length < 32) {
-      const padding = Buffer.alloc(32 - s.length, 0);
-      sPadded = new Uint8Array(32);
-      sPadded.set(new Uint8Array(padding), 0);
-      sPadded.set(new Uint8Array(s), padding.length);
-    } else if (s.length > 32) {
-      sPadded = new Uint8Array(s.buffer, s.byteOffset + s.length - 32, 32);
+    if (s.length <= 32) {
+      // Trường hợp s ngắn hơn 32 bytes, thêm padding
+      sPadded.set(new Uint8Array(s), 32 - s.length);
     } else {
-      sPadded = new Uint8Array(s);
+      // Trường hợp s dài hơn 32 bytes, lấy 32 bytes cuối
+      sPadded.set(new Uint8Array(s.slice(s.length - 32)));
     }
     
-    // Concatenate r and s
-    const result = new Uint8Array(64);
-    result.set(rPadded, 0);
-    result.set(sPadded, 32);
+    // Nối r và s lại
+    const rawSignature = new Uint8Array(64);
+    rawSignature.set(rPadded, 0);
+    rawSignature.set(sPadded, 32);
     
-    return result;
+    console.log('Raw signature sau khi chuyển đổi (r||s):');
+    console.log('- Length:', rawSignature.length);
+    console.log('- Hex:', Buffer.from(rawSignature).toString('hex'));
+    
+    return rawSignature;
   } catch (error) {
     console.error('Lỗi khi chuyển đổi chữ ký DER sang raw:', error);
     throw error;
@@ -526,140 +538,65 @@ export const getWebAuthnAssertion = async (credentialId: string | null, message?
     throw new Error('WebAuthn không được hỗ trợ trên trình duyệt này');
   }
 
-  console.warn("ĐẶC BIỆT QUAN TRỌNG: Nếu bạn đang thấy QR code thay vì danh sách credentials, vui lòng kiểm tra xem có phần mềm nào đang can thiệp vào quá trình xác thực WebAuthn.");
+  console.log("Bắt đầu xác thực WebAuthn để ký tin nhắn");
 
   // Tạo challenge từ message hoặc ngẫu nhiên nếu không có message
   let challenge: Uint8Array;
   if (message) {
-    // Nếu có message, sử dụng hash của message làm challenge
-    const msgBytes = new TextEncoder().encode(message);
-    const msgHash = await crypto.subtle.digest('SHA-256', msgBytes);
-    challenge = new Uint8Array(msgHash);
-    console.log("Sử dụng message để tạo challenge:", message);
+    // QUAN TRỌNG: KHÔNG hash message ở đây
+    // WebAuthn sẽ tự động hash message với SHA-256
+    // Gửi message gốc trực tiếp làm challenge
+    challenge = new TextEncoder().encode(message);
+    console.log("Sử dụng message gốc làm challenge:", message);
+    console.log("Challenge bytes:", Array.from(challenge).map(b => b.toString(16).padStart(2, '0')).join(' '));
   } else {
     // Nếu không, tạo challenge ngẫu nhiên
     challenge = new Uint8Array(32);
     crypto.getRandomValues(challenge);
+    console.log("Sử dụng challenge ngẫu nhiên");
   }
-  
-  console.log("Challenge:", Buffer.from(challenge).toString('hex'));
   
   // Tạo options cho get assertion
   const options: PublicKeyCredentialRequestOptions = {
     challenge: challenge,
-    rpId: window.location.hostname,
-    timeout: 120000, // Tăng timeout lên 2 phút
-    // Quan trọng: Đặt userVerification thành 'discouraged' để khuyến khích hiển thị danh sách
-    userVerification: 'discouraged'
+    timeout: 60000,
+    userVerification: 'required' // Bắt buộc xác thực người dùng (TouchID, FaceID, v.v.)
   };
 
-  // Cố ý KHÔNG sử dụng allowCredentials để buộc trình duyệt hiển thị danh sách
-  // Nếu allowEmpty=true hoặc credentialId=null, không cần quy định allowCredentials cụ thể
-  if (allowEmpty || credentialId === null || credentialId === '') {
-    // Không đặt options.allowCredentials, để trình duyệt hiển thị tất cả
-    console.log("Yêu cầu hiển thị tất cả credentials trong authenticator");
-  }
-  // Chỉ đặt allowCredentials khi thực sự cần sử dụng credential cụ thể
-  else if (credentialId && !allowEmpty) {
+  // Nếu có credentialId cụ thể, đặt allowCredentials
+  if (credentialId && !allowEmpty) {
     try {
-      // Thử chuyển đổi từ hex
+      // Chuyển đổi từ hex sang buffer
       const credentialIdBuffer = Buffer.from(credentialId, 'hex');
       options.allowCredentials = [{
         id: credentialIdBuffer,
         type: 'public-key',
-        // Thêm tất cả loại transports có thể
         transports: ['internal', 'hybrid', 'usb', 'ble', 'nfc']
       }];
-      console.log("Sử dụng credential cụ thể:", credentialId.slice(0, 10) + "...");
+      console.log("Sử dụng credential cụ thể:", credentialId);
     } catch (error) {
       console.error("Lỗi khi parse credentialId:", error);
-      // Nếu không chuyển đổi được, không đặt allowCredentials
     }
   }
 
   try {
-    console.log("Đang hiển thị hộp thoại xác thực WebAuthn...");
+    console.log("Đang yêu cầu xác thực WebAuthn...");
     
-    // Hủy các phần tử QR code hiện có
-    const qrElements = document.querySelectorAll('[class*="qr"], [id*="qr"], [class*="QR"], [id*="QR"]');
-    if (qrElements.length > 0) {
-      console.warn(`Phát hiện ${qrElements.length} phần tử QR trên trang, đang ẩn...`);
-      qrElements.forEach(elem => {
-        if (elem instanceof HTMLElement) {
-          elem.style.display = 'none';
-        }
-      });
-    }
-    
-    // QUAN TRỌNG: Đảm bảo không có mediation để trình duyệt quyết định cách hiển thị
-    // Thử cách 1: Không đặt mediation và để trình duyệt tự quyết định
-    console.log("Thử cách 1: Không đặt mediation");
-    try {
-      const assertion = await navigator.credentials.get({
-        publicKey: options
-      }) as PublicKeyCredential;
-      
-      if (assertion) {
-        const response = assertion.response as AuthenticatorAssertionResponse;
-        return {
-          signature: new Uint8Array(response.signature),
-          authenticatorData: new Uint8Array(response.authenticatorData),
-          clientDataJSON: new Uint8Array(response.clientDataJSON)
-        };
-      }
-    } catch (error) {
-      console.error("Cách 1 thất bại:", error);
-    }
-    
-    // Thử cách 2: Sử dụng đặc tính conditional
-    console.log("Thử cách 2: Sử dụng conditional");
-    try {
-      const assertion = await navigator.credentials.get({
-        publicKey: options,
-        // @ts-ignore - Thuộc tính này không có trong TypeScript nhưng được hỗ trợ bởi trình duyệt hiện đại
-        conditional: true 
-      }) as PublicKeyCredential;
-      
-      if (assertion) {
-        const response = assertion.response as AuthenticatorAssertionResponse;
-        return {
-          signature: new Uint8Array(response.signature),
-          authenticatorData: new Uint8Array(response.authenticatorData),
-          clientDataJSON: new Uint8Array(response.clientDataJSON)
-        };
-      }
-    } catch (error) {
-      console.error("Cách 2 thất bại:", error);
-    }
-    
-    // Thử cách 3: Sử dụng mediation: 'optional'
-    console.log("Thử cách 3: Sử dụng mediation: 'optional'");
-    try {
-      const assertion = await navigator.credentials.get({
-        publicKey: options,
-        mediation: 'optional'
-      }) as PublicKeyCredential;
-      
-      if (assertion) {
-        const response = assertion.response as AuthenticatorAssertionResponse;
-        return {
-          signature: new Uint8Array(response.signature),
-          authenticatorData: new Uint8Array(response.authenticatorData),
-          clientDataJSON: new Uint8Array(response.clientDataJSON)
-        };
-      }
-    } catch (error) {
-      console.error("Cách 3 thất bại:", error);
-    }
-    
-    // Thử cách 4: Cuối cùng, dùng mediation: 'required'
-    console.log("Thử cách 4: Sử dụng mediation: 'required'");
     const assertion = await navigator.credentials.get({
-      publicKey: options,
-      mediation: 'required'
+      publicKey: options
     }) as PublicKeyCredential;
     
+    if (!assertion) {
+      throw new Error("Không nhận được kết quả xác thực từ WebAuthn");
+    }
+    
     const response = assertion.response as AuthenticatorAssertionResponse;
+    
+    // Log thông tin để debug
+    console.log("WebAuthn assertion thành công:");
+    console.log("- Signature length:", response.signature.byteLength);
+    console.log("- ClientDataJSON:", new TextDecoder().decode(response.clientDataJSON));
+    
     return {
       signature: new Uint8Array(response.signature),
       authenticatorData: new Uint8Array(response.authenticatorData),

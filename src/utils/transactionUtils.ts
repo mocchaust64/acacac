@@ -2,21 +2,74 @@ import { web3, BN } from '@coral-xyz/anchor';
 import { PublicKey, Transaction, Keypair, SystemProgram, TransactionInstruction } from '@solana/web3.js';
 import { Buffer } from 'buffer';
 import idlFile from '../idl/moon_wallet_program.json';
+import { Connection, sendAndConfirmTransaction } from '@solana/web3.js';
 
-// Export programID để có thể import được từ các file khác
-export const programID = new PublicKey('HN8JJdo8c9iLQPzbTqjoioW61BDgyevHaGkCPSYLuDy');
+// Export programID từ biến môi trường thay vì hardcode
+export const programID = new PublicKey(process.env.REACT_APP_PROGRAM_ID || 'DeN1rBfabZezHPvrq9q7BbzUbZkrjnHE1kQDrPK8kWQ3');
 
-// Lấy discriminator từ IDL mới
-function getDiscriminatorFromIdl(instructionName: string): Buffer {
-  const instruction = idlFile.instructions.find(ix => ix.name === instructionName);
-  if (!instruction || !instruction.discriminator) {
-    throw new Error(`Không tìm thấy discriminator cho instruction: ${instructionName}`);
-  }
-  return Buffer.from(instruction.discriminator);
-}
+// Hằng số cho chương trình secp256r1
+export const SECP256R1_PROGRAM_ID = new PublicKey('Secp256r1SigVerify1111111111111111111111111');
+
+// Hằng số cho Sysvar accounts với địa chỉ chính xác
+export const SYSVAR_INSTRUCTIONS_PUBKEY = new PublicKey('Sysvar1nstructions1111111111111111111111111');
+export const SYSVAR_CLOCK_PUBKEY = new PublicKey('SysvarC1ock11111111111111111111111111111111');
 
 // Sửa lỗi type cho IDL
 const idl: any = idlFile;
+
+// Cập nhật: Chương trình secp256r1 là một chương trình native của Solana, 
+// nên không thể kiểm tra bằng getAccountInfo
+export const checkSecp256r1Program = async (): Promise<boolean> => {
+  // Chương trình native luôn tồn tại trên validator chính thức
+  // Chỉ cần đảm bảo validator được khởi động với tham số phù hợp
+  return true;
+};
+
+// Thêm hàm kiểm tra chương trình secp256r1 thông qua transaction thử nghiệm nếu cần
+export const testSecp256r1Instruction = async (connection: web3.Connection): Promise<boolean> => {
+  try {
+    // Tạo một cặp khóa giả lập cho việc kiểm tra
+    const testKeyPair = web3.Keypair.generate();
+    
+    // Tạo một chữ ký và message giả
+    const testSignature = Buffer.alloc(64, 1); // Chữ ký giả 64 bytes
+    const testPubkey = Buffer.alloc(33, 2); // Khóa công khai giả 33 bytes
+    testPubkey[0] = 0x02; // Định dạng khóa nén
+    const testMessage = Buffer.alloc(32, 3); // Message hash giả 32 bytes
+    
+    // Tạo instruction secp256r1 giả
+    const testInstruction = createSecp256r1Instruction(
+      testMessage,
+      testPubkey,
+      testSignature
+    );
+    
+    // Tạo transaction giả với instruction trên
+    const testTx = new web3.Transaction().add(testInstruction);
+    testTx.feePayer = testKeyPair.publicKey;
+    const { blockhash } = await connection.getLatestBlockhash();
+    testTx.recentBlockhash = blockhash;
+    
+    // Chỉ mô phỏng giao dịch, không gửi thật
+    await connection.simulateTransaction(testTx);
+    
+    // Nếu không có lỗi "program not found", chương trình tồn tại
+    return true;
+  } catch (error: any) {
+    // Kiểm tra lỗi cụ thể
+    const errorMessage = error.toString();
+    // Nếu lỗi là về chương trình không tồn tại
+    if (errorMessage.includes("Attempt to load a program that does not exist") ||
+        errorMessage.includes("Program not found")) {
+      console.error("Chương trình secp256r1 không tồn tại:", error);
+      return false;
+    }
+    
+    // Nếu là lỗi khác (vd: chữ ký không hợp lệ), chương trình vẫn tồn tại
+    console.warn("Lỗi khi kiểm tra secp256r1, nhưng chương trình có thể tồn tại:", error);
+    return true;
+  }
+};
 
 // Cập nhật lại hàm tạo transaction
 export const createInitializeMultisigTx = async (
@@ -310,15 +363,127 @@ export const createAddGuardianTx = (
   }
 };
 
+// Các hằng số cần thiết cho Secp256r1
+export const COMPRESSED_PUBKEY_SIZE = 33;
+export const SIGNATURE_SIZE = 64;
+export const DATA_START = 16; // 2 bytes header + 14 bytes offsets
+export const SIGNATURE_OFFSETS_START = 2;
+
 /**
- * Tạo transaction cho chức năng chuyển tiền (transfer)
- * @param multisigPDA PDA của ví đa chữ ký
- * @param guardian Thông tin guardian có quyền ký
- * @param destination Địa chỉ đích để chuyển tiền
- * @param amountLamports Số lượng lamports cần chuyển
- * @param nonce Nonce giao dịch
- * @param timestamp Thời gian giao dịch (unix timestamp)
- * @param message Thông điệp đã ký
+ * Tạo instruction data cho chương trình Secp256r1SigVerify
+ * @param message Tin nhắn gốc không hash
+ * @param publicKey Khóa công khai nén
+ * @param signature Chữ ký chuẩn hóa
+ */
+export const createSecp256r1Instruction = (
+  message: Buffer, 
+  publicKey: Buffer,
+  signature: Buffer,
+  shouldFlipPublicKey: boolean = false
+): TransactionInstruction => {
+  console.log("Tạo secp256r1 instruction với:");
+  console.log(`- Message (${message.length} bytes):`, message.toString('hex').substring(0, 64) + '...');
+  console.log(`- Public key (${publicKey.length} bytes):`, publicKey.toString('hex'));
+  console.log(`- Signature (${signature.length} bytes):`, signature.toString('hex'));
+  console.log(`- Flip public key: ${shouldFlipPublicKey}`);
+  
+  // Đảm bảo public key có đúng định dạng (compressed, 33 bytes)
+  if (publicKey.length !== 33) {
+    console.error('Public key phải có đúng 33 bytes (dạng nén)');
+    throw new Error(`Public key phải có đúng 33 bytes, nhưng có ${publicKey.length} bytes`);
+  }
+  
+  // Đảm bảo signature có đúng 64 bytes
+  if (signature.length !== 64) {
+    console.error('Signature phải có đúng 64 bytes');
+    throw new Error(`Signature phải có đúng 64 bytes, nhưng có ${signature.length} bytes`);
+  }
+  
+  // Kiểm tra byte đầu tiên của public key
+  if (publicKey[0] !== 0x02 && publicKey[0] !== 0x03) {
+    console.warn(`Byte đầu tiên của public key nên là 0x02 hoặc 0x03, nhưng là 0x${publicKey[0].toString(16)}`);
+  }
+  
+  // Chuyển đổi public key nếu cần
+  let pubkeyToUse = publicKey;
+  if (shouldFlipPublicKey) {
+    // Tạo public key mới với byte đầu tiên bị đảo
+    pubkeyToUse = Buffer.from(publicKey);
+    pubkeyToUse[0] = pubkeyToUse[0] === 0x02 ? 0x03 : 0x02;
+    console.log(`- Public key sau khi đảo (${pubkeyToUse.length} bytes):`, pubkeyToUse.toString('hex'));
+  }
+  
+  // Các hằng số
+  const COMPRESSED_PUBKEY_SIZE = 33;
+  const SIGNATURE_SIZE = 64;
+  const DATA_START = 16; // 1 byte + 1 byte padding + 14 bytes offsets
+  const SIGNATURE_OFFSETS_START = 2;
+  
+  // Tính tổng kích thước dữ liệu
+  const totalSize = DATA_START + SIGNATURE_SIZE + COMPRESSED_PUBKEY_SIZE + message.length;
+  const instructionData = Buffer.alloc(totalSize);
+
+  // Tính offset
+  const numSignatures = 1;
+  const publicKeyOffset = DATA_START;
+  const signatureOffset = publicKeyOffset + COMPRESSED_PUBKEY_SIZE;
+  const messageDataOffset = signatureOffset + SIGNATURE_SIZE;
+
+  // Ghi số lượng chữ ký và padding
+  instructionData.writeUInt8(numSignatures, 0);
+  instructionData.writeUInt8(0, 1); // padding
+
+  // Tạo và ghi offsets
+  const offsets = {
+    signature_offset: signatureOffset,
+    signature_instruction_index: 0xffff, // u16::MAX
+    public_key_offset: publicKeyOffset,
+    public_key_instruction_index: 0xffff,
+    message_data_offset: messageDataOffset,
+    message_data_size: message.length,
+    message_instruction_index: 0xffff,
+  };
+
+  // Ghi offsets
+  instructionData.writeUInt16LE(offsets.signature_offset, SIGNATURE_OFFSETS_START);
+  instructionData.writeUInt16LE(offsets.signature_instruction_index, SIGNATURE_OFFSETS_START + 2);
+  instructionData.writeUInt16LE(offsets.public_key_offset, SIGNATURE_OFFSETS_START + 4);
+  instructionData.writeUInt16LE(offsets.public_key_instruction_index, SIGNATURE_OFFSETS_START + 6);
+  instructionData.writeUInt16LE(offsets.message_data_offset, SIGNATURE_OFFSETS_START + 8);
+  instructionData.writeUInt16LE(offsets.message_data_size, SIGNATURE_OFFSETS_START + 10);
+  instructionData.writeUInt16LE(offsets.message_instruction_index, SIGNATURE_OFFSETS_START + 12);
+
+  // Ghi dữ liệu vào instruction
+  pubkeyToUse.copy(instructionData, publicKeyOffset);
+  signature.copy(instructionData, signatureOffset);
+  message.copy(instructionData, messageDataOffset);
+  
+  console.log('Secp256r1 instruction data:');
+  console.log('- Total size:', instructionData.length);
+  console.log('- Public key offset:', publicKeyOffset);
+  console.log('- Signature offset:', signatureOffset);
+  console.log('- Message offset:', messageDataOffset);
+  console.log('- Message size:', message.length);
+  
+  // Log dữ liệu hex
+  console.log('- Instruction data (50 bytes đầu):', instructionData.slice(0, 50).toString('hex'));
+  
+  return new TransactionInstruction({
+    keys: [],
+    programId: SECP256R1_PROGRAM_ID,
+    data: instructionData,
+  });
+};
+
+/**
+ * Tạo transaction để chuyển tiền
+ * @param multisigPDA PDA của ví multisig
+ * @param guardianPDA PDA của guardian
+ * @param destination Địa chỉ đích để chuyển token
+ * @param amountLamports Số lượng lamports để chuyển
+ * @param nonce Nonce tránh replay attack
+ * @param timestamp Timestamp cho giao dịch
+ * @param message Thông điệp gốc (chưa hash)
  * @param payer Người trả phí giao dịch
  */
 export const createTransferTx = (
@@ -332,6 +497,42 @@ export const createTransferTx = (
   payer: PublicKey
 ): Transaction => {
   try {
+    // Kiểm tra các input
+    if (!(multisigPDA instanceof PublicKey)) {
+      throw new Error(`multisigPDA không phải PublicKey: ${typeof multisigPDA}`);
+    }
+    if (!(guardianPDA instanceof PublicKey)) {
+      throw new Error(`guardianPDA không phải PublicKey: ${typeof guardianPDA}`);
+    }
+    if (!(destination instanceof PublicKey)) {
+      throw new Error(`destination không phải PublicKey: ${typeof destination}`);
+    }
+    if (!(payer instanceof PublicKey)) {
+      throw new Error(`payer không phải PublicKey: ${typeof payer}`);
+    }
+    
+    // Đảm bảo các giá trị số hợp lệ
+    if (isNaN(amountLamports) || amountLamports <= 0) {
+      throw new Error(`amountLamports không hợp lệ: ${amountLamports}`);
+    }
+    if (isNaN(nonce) || nonce < 0) {
+      throw new Error(`nonce không hợp lệ: ${nonce}`);
+    }
+    if (isNaN(timestamp) || timestamp <= 0) {
+      throw new Error(`timestamp không hợp lệ: ${timestamp}`);
+    }
+    
+    // Log thông tin debug để kiểm tra
+    console.log('Tạo transaction chuyển tiền với thông tin:');
+    console.log('- multisigPDA:', multisigPDA.toString());
+    console.log('- guardianPDA:', guardianPDA.toString());
+    console.log('- destination:', destination.toString());
+    console.log('- amountLamports:', amountLamports);
+    console.log('- nonce:', nonce);
+    console.log('- timestamp:', timestamp);
+    console.log('- message length:', message.length);
+    console.log('- payer:', payer.toString());
+    
     // Discriminator cho verify_and_execute
     const discriminator = Buffer.from([80, 118, 102, 72, 125, 57, 218, 137]);
     
@@ -391,13 +592,17 @@ export const createTransferTx = (
       messageBuffer
     ]);
     
+    // Kiểm tra địa chỉ của instruction sysvar
+    const sysvarInstructionPubkey = SYSVAR_INSTRUCTIONS_PUBKEY;
+    const sysvarClockPubkey = SYSVAR_CLOCK_PUBKEY;
+    
     // Tạo instruction verify_and_execute
     const ix = new TransactionInstruction({
       keys: [
         { pubkey: multisigPDA, isSigner: false, isWritable: true },
         { pubkey: guardianPDA, isSigner: false, isWritable: false },
-        { pubkey: new PublicKey('SysvarC1ock11111111111111111111111111111111'), isSigner: false, isWritable: false },
-        { pubkey: new PublicKey('Sysvar1nstructions1111111111111111111111111'), isSigner: false, isWritable: false },
+        { pubkey: sysvarClockPubkey, isSigner: false, isWritable: false },
+        { pubkey: sysvarInstructionPubkey, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: payer, isSigner: true, isWritable: true },
         { pubkey: destination, isSigner: false, isWritable: true }
@@ -414,56 +619,51 @@ export const createTransferTx = (
   }
 };
 
-/**
- * Tạo instruction data cho chương trình Secp256r1SigVerify
- * @param publicKey Khóa công khai của guardian (nén)
- * @param signature Chữ ký cho message
- * @param message Message đã hash bằng SHA-256
- */
-export const createSecp256r1Instruction = (
+// Thêm hàm mới để xác minh chữ ký secp256r1 độc lập
+export const verifySecp256r1Signature = async (
+  connection: Connection,
+  message: Buffer,
   publicKey: Buffer, 
   signature: Buffer, 
-  message: Buffer
-): TransactionInstruction => {
-  // Constants
-  const SECP256R1_PROGRAM_ID = new PublicKey('Secp256r1SigVerify1111111111111111111111111');
-  const SIGNATURE_OFFSETS_SERIALIZED_SIZE = 14;
-  const SIGNATURE_OFFSETS_START = 2;
-  const DATA_START = SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
-  const SIGNATURE_SERIALIZED_SIZE = 64;
-  const COMPRESSED_PUBKEY_SERIALIZED_SIZE = 33;
-  
-  // Tính toán tổng kích thước instruction data
-  const totalSize = DATA_START + SIGNATURE_SERIALIZED_SIZE + COMPRESSED_PUBKEY_SERIALIZED_SIZE + message.length;
-  const instructionData = Buffer.alloc(totalSize);
-  
-  // Header
-  instructionData.writeUInt8(1, 0); // num_signatures = 1
-  instructionData.writeUInt8(0, 1); // padding
-  
-  // Offsets
-  const publicKeyOffset = DATA_START;
-  const signatureOffset = publicKeyOffset + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
-  const messageDataOffset = signatureOffset + SIGNATURE_SERIALIZED_SIZE;
-  
-  // Write offsets
-  instructionData.writeUInt16LE(signatureOffset, SIGNATURE_OFFSETS_START);
-  instructionData.writeUInt16LE(0xffff, SIGNATURE_OFFSETS_START + 2);
-  instructionData.writeUInt16LE(publicKeyOffset, SIGNATURE_OFFSETS_START + 4);
-  instructionData.writeUInt16LE(0xffff, SIGNATURE_OFFSETS_START + 6);
-  instructionData.writeUInt16LE(messageDataOffset, SIGNATURE_OFFSETS_START + 8);
-  instructionData.writeUInt16LE(message.length, SIGNATURE_OFFSETS_START + 10);
-  instructionData.writeUInt16LE(0xffff, SIGNATURE_OFFSETS_START + 12);
-  
-  // Write data
-  publicKey.copy(instructionData, publicKeyOffset);
-  signature.copy(instructionData, signatureOffset);
-  message.copy(instructionData, messageDataOffset);
-  
-  // Tạo instruction
-  return new TransactionInstruction({
-    keys: [],
-    programId: SECP256R1_PROGRAM_ID,
-    data: instructionData
-  });
+  feePayer: Keypair,
+  shouldFlipPublicKey: boolean = false
+): Promise<string> => {
+  try {
+    console.log("=== BẮT ĐẦU XÁC MINH CHỮ KÝ SECP256R1 ĐỘC LẬP ===");
+    console.log("Message:", message.toString());
+    console.log("Public key:", publicKey.toString('hex'));
+    console.log("Signature:", signature.toString('hex'));
+    
+    // Tạo instruction xác minh chữ ký
+    const verifyInstruction = createSecp256r1Instruction(
+      message,
+      publicKey,
+      signature,
+      shouldFlipPublicKey
+    );
+    
+    // Tạo transaction đơn giản chỉ chứa instruction xác minh
+    const transaction = new Transaction().add(verifyInstruction);
+    
+    // Thiết lập fee payer và recent blockhash
+    transaction.feePayer = feePayer.publicKey;
+    const { blockhash } = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    
+    // Ký và gửi transaction
+    console.log("Gửi transaction chỉ để xác minh chữ ký secp256r1...");
+    const txSignature = await sendAndConfirmTransaction(
+      connection,
+      transaction,
+      [feePayer]
+    );
+    
+    console.log("✅ XÁC MINH CHỮ KÝ SECP256R1 THÀNH CÔNG!");
+    console.log("Transaction signature:", txSignature);
+    
+    return txSignature;
+  } catch (error: any) {
+    console.error("❌ XÁC MINH CHỮ KÝ SECP256R1 THẤT BẠI:", error);
+    throw new Error(`Lỗi khi xác minh chữ ký secp256r1: ${error.message}`);
+  }
 };

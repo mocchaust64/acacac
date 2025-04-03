@@ -14,6 +14,7 @@ import {
   deleteGuardianData
 } from './firebase/guardianService';
 import { getWalletByCredentialId } from './firebase/webAuthnService';
+import { saveWebAuthnCredentialMapping } from './firebase/webAuthnService';
 // Thêm import TransferForm
 import { TransferForm } from './components/TransferForm';
 
@@ -510,6 +511,43 @@ function App() {
         
         await connection.confirmTransaction(addGuardianSignature);
         setTransactionStatus(prev => prev + `\nGuardian owner đã được thêm thành công! Signature: ${addGuardianSignature}`);
+        
+        // Lưu ánh xạ WebAuthn credential vào Firebase để sử dụng sau này
+        // THÊM ĐOẠN NÀY: Lưu credential ID và public key vào Firebase
+        try {
+          // Lưu ánh xạ WebAuthn credential vào Firebase
+          await saveWebAuthnCredentialMapping(
+            rawIdBase64,  // credential ID
+            multisigPDA.toString(), // địa chỉ ví multisig
+            Array.from(new Uint8Array(compressedKeyBuffer)) // public key đã nén
+          );
+          
+          console.log("Đã lưu ánh xạ WebAuthn credential vào Firebase:", {
+            credentialId: rawIdBase64,
+            walletAddress: multisigPDA.toString(),
+            publicKeyLength: compressedKeyBuffer.length
+          });
+          
+          // Lưu thông tin vào localStorage để có backup
+          try {
+            const webauthnMapping = {
+              credentialId: rawIdBase64,
+              walletAddress: multisigPDA.toString(),
+              guardianPublicKey: Array.from(new Uint8Array(compressedKeyBuffer))
+            };
+            
+            localStorage.setItem('webauthn_credential_' + rawIdBase64, JSON.stringify(webauthnMapping));
+            console.log("Đã lưu ánh xạ WebAuthn credential vào localStorage");
+            
+            setTransactionStatus(prev => prev + `\nĐã lưu thông tin credential WebAuthn thành công!`);
+          } catch (storageError) {
+            console.warn("Không thể lưu vào localStorage:", storageError);
+          }
+        } catch (firebaseError) {
+          console.error("Lỗi khi lưu WebAuthn credential vào Firebase:", firebaseError);
+          setTransactionStatus(prev => prev + `\nCảnh báo: Không thể lưu thông tin credential WebAuthn vào Firebase. Chức năng chuyển tiền có thể gặp vấn đề.`);
+        }
+        
       } catch (error: any) {
         console.error("Lỗi khi thêm guardian owner:", error);
         setTransactionStatus(prev => prev + `\nLỗi khi thêm guardian owner: ${error.message}`);
@@ -1723,7 +1761,6 @@ Guardian đã sẵn sàng để sử dụng trong ví multisig của bạn.`);
                         loadPdaBalance(multisigAddress);
                       }
                     }}
-                    // Thêm props connection và pdaBalance
                     connection={connection}
                     pdaBalance={pdaBalance}
                   />
