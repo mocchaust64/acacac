@@ -9,6 +9,11 @@ import { PROGRAM_ID } from '../App';
 export const processCredentialIdForPDA = (credentialId: string): Uint8Array => {
   const credentialBuffer = Buffer.from(credentialId);
   
+  console.log("FRONTEND - processCredentialIdForPDA");
+  console.log("Input credential ID:", credentialId);
+  console.log("Credential buffer length:", credentialBuffer.length);
+  console.log("Credential buffer bytes:", Array.from(credentialBuffer));
+  
   // Seed tối đa cho PDA là 32 bytes, trừ đi "multisig" (8 bytes) còn 24 bytes
   let seedBuffer: Uint8Array;
   
@@ -22,10 +27,12 @@ export const processCredentialIdForPDA = (credentialId: string): Uint8Array => {
     }
     
     seedBuffer = hashResult;
+    console.log("Seed buffer sau khi hash:", Array.from(seedBuffer));
   } else {
     // Nếu không quá dài, tạo buffer mới với độ dài cố định 24 bytes, padding với 0
     seedBuffer = new Uint8Array(24);
     seedBuffer.set(credentialBuffer);
+    console.log("Seed buffer không hash (padded):", Array.from(seedBuffer));
   }
   
   return seedBuffer;

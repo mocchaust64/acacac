@@ -15,7 +15,6 @@ import {
 } from './firebase/guardianService';
 import { getWalletByCredentialId } from './firebase/webAuthnService';
 import { saveWebAuthnCredentialMapping } from './firebase/webAuthnService';
-// Thêm import TransferForm
 import { TransferForm } from './components/TransferForm';
 
 
@@ -88,20 +87,7 @@ const bigIntToLeBytes = (value: bigint, bytesLength: number = 8): Uint8Array => 
 };
 
 
-const calculateMultisigPDA = async (programId: PublicKey, credentialId: string): Promise<[PublicKey, number]> => {
 
-  const seedBuffer = processCredentialIdForPDA(credentialId);
-  console.log("Xử lý credential ID:", credentialId);
-  console.log("Seed buffer để tính PDA:", Buffer.from(seedBuffer).toString('hex'));
-  
-  return PublicKey.findProgramAddressSync(
-    [
-      Buffer.from("multisig"),
-      seedBuffer
-    ],
-    programId
-  );
-};
 
 // Hàm nén khóa công khai từ dạng uncompressed (65 bytes) sang compressed (33 bytes)
 const compressPublicKey = (uncompressedKey: Buffer): Buffer => {
@@ -112,7 +98,6 @@ const compressPublicKey = (uncompressedKey: Buffer): Buffer => {
     const randomKey = Buffer.alloc(33);
     randomKey[0] = 0x02; // compressed, y is even
     
-    // Tạo dữ liệu ngẫu nhiên cho 32 bytes còn lại
     const randomBytes = new Uint8Array(32);
     crypto.getRandomValues(randomBytes);
     
@@ -182,12 +167,7 @@ const convertSecretKeyStringToUint8Array = (secretKeyString: string | undefined)
 };
 
 
-const hashCredentialId = async (credentialId: string): Promise<Uint8Array> => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(credentialId);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  return new Uint8Array(hashBuffer);
-};
+
 
 function App() {
   const [walletKeypair, setWalletKeypair] = useState<Keypair | null>(null);
@@ -314,7 +294,13 @@ function App() {
       // Chuyển đổi rawId thành base64 để lưu trữ và sử dụng
       const rawIdBase64 = Buffer.from(result.rawId).toString('base64');
       
-
+      console.log("================== QUẢN LÝ CREDENTIAL ID ====================");
+      console.log("Raw ID (Uint8Array):", result.rawId);
+      console.log("Raw ID length:", result.rawId.length);
+      console.log("Raw ID (base64):", rawIdBase64);
+      console.log("Raw ID (base64) length:", rawIdBase64.length);
+      console.log("=============================================================");
+      
       setCredentialId(rawIdBase64); 
       setWebauthnPubkey(result.publicKey);
       

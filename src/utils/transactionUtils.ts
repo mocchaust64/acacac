@@ -422,7 +422,7 @@ export const createSecp256r1Instruction = (
   // Tính tổng kích thước dữ liệu
   const totalSize = DATA_START + SIGNATURE_SIZE + COMPRESSED_PUBKEY_SIZE + message.length;
   const instructionData = Buffer.alloc(totalSize);
-
+  
   // Tính offset
   const numSignatures = 1;
   const publicKeyOffset = DATA_START;
@@ -485,6 +485,7 @@ export const createSecp256r1Instruction = (
  * @param timestamp Timestamp cho giao dịch
  * @param message Thông điệp gốc (chưa hash)
  * @param payer Người trả phí giao dịch
+ * @param credentialId Tham số credential ID gốc
  */
 export const createTransferTx = (
   multisigPDA: PublicKey,
@@ -494,7 +495,8 @@ export const createTransferTx = (
   nonce: number,
   timestamp: number,
   message: Uint8Array,
-  payer: PublicKey
+  payer: PublicKey,
+  credentialId?: string
 ): Transaction => {
   try {
     // Kiểm tra các input
@@ -524,17 +526,36 @@ export const createTransferTx = (
     
     // Log thông tin debug để kiểm tra
     console.log('Tạo transaction chuyển tiền với thông tin:');
-    console.log('- multisigPDA:', multisigPDA.toString());
-    console.log('- guardianPDA:', guardianPDA.toString());
-    console.log('- destination:', destination.toString());
+    console.log('- multisigPDA:', multisigPDA.toBase58());
+    console.log('- guardianPDA:', guardianPDA.toBase58());
+    console.log('- destination:', destination.toBase58());
     console.log('- amountLamports:', amountLamports);
     console.log('- nonce:', nonce);
     console.log('- timestamp:', timestamp);
     console.log('- message length:', message.length);
-    console.log('- payer:', payer.toString());
+    console.log('- payer:', payer.toBase58());
+    
+    // Thêm log credential ID nếu có
+    if (credentialId) {
+      console.log('- credentialId:', credentialId);
+      console.log('- credentialId length:', credentialId.length);
+      // Log bytes để debug
+      const credentialBytes = Buffer.from(credentialId);
+      console.log('- credentialId bytes:', Array.from(credentialBytes));
+      
+      // Log bytes được xử lý nếu dài quá 24 bytes (giống như trong contract)
+      if (credentialBytes.length > 24) {
+        console.log('- credentialId dài quá 24 bytes, cần hash');
+        const processedBytes = new Uint8Array(24);
+        for (let i = 0; i < credentialBytes.length; i++) {
+          processedBytes[i % 24] ^= credentialBytes[i];
+        }
+        console.log('- credentialId bytes after processing:', Array.from(processedBytes));
+      }
+    }
     
     // Discriminator cho verify_and_execute
-    const discriminator = Buffer.from([80, 118, 102, 72, 125, 57, 218, 137]);
+    const discriminator = Buffer.from([37, 165, 237, 189, 225, 188, 58, 41]);
     
     // Tham số cho 'action' - chuỗi "transfer"
     const action = "transfer";
@@ -597,7 +618,7 @@ export const createTransferTx = (
     const sysvarClockPubkey = SYSVAR_CLOCK_PUBKEY;
     
     // Tạo instruction verify_and_execute
-    const ix = new TransactionInstruction({
+    const instruction = new TransactionInstruction({
       keys: [
         { pubkey: multisigPDA, isSigner: false, isWritable: true },
         { pubkey: guardianPDA, isSigner: false, isWritable: false },
@@ -605,14 +626,32 @@ export const createTransferTx = (
         { pubkey: sysvarInstructionPubkey, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: payer, isSigner: true, isWritable: true },
-        { pubkey: destination, isSigner: false, isWritable: true }
+        { pubkey: destination, isSigner: false, isWritable: true },
       ],
       programId: programID,
       data
     });
     
-    // Tạo transaction mới
-    return new Transaction().add(ix);
+    // Tính toán và hiển thị expected message format
+    const amountInSol = amountLamports / 1_000_000_000.0; 
+    const formattedAmount = amountInSol.toString().replace(/\.?0+$/, '');
+    const expectedMessage = `transfer:${formattedAmount}_SOL_to_${destination.toBase58()},nonce:${nonce},timestamp:${timestamp},pubkey:<hash>`;
+    console.log('Expected message format trong contract:', expectedMessage);
+    
+    // Debug chi tiết message
+    console.log('===== DEBUG MESSAGE SENT TO CONTRACT =====');
+    const messageString = new TextDecoder().decode(message);
+    console.log('Message được gửi đến contract:', messageString);
+    console.log('Message length:', messageString.length);
+    console.log('Message bytes array:', Array.from(message));
+    console.log('Message bytes detailed:', Array.from(message)
+      .map((b, i) => `[${i}] ${b} (${String.fromCharCode(b)})`).join(', '));
+    console.log('Message hex:', Buffer.from(message).toString('hex'));
+    console.log('=========================================');
+    
+    // Tạo giao dịch
+    const tx = new Transaction().add(instruction);
+    return tx;
   } catch (error) {
     console.error("Lỗi khi tạo transaction chuyển tiền:", error);
     throw error;

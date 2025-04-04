@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PublicKey, Transaction, Connection, SendTransactionError } from '@solana/web3.js';
 import { web3 } from '@coral-xyz/anchor';
-// Xóa useConnection hook vì sẽ nhận connection từ props
-// import { useConnection } from '@solana/wallet-adapter-react';
+
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { 
   createTransferTx, 
@@ -15,6 +14,9 @@ import { getGuardianPDA, getMultisigPDA } from '../utils/credentialUtils';
 import { getWalletByCredentialId } from '../firebase/webAuthnService';
 import { Buffer } from 'buffer';
 import BN from 'bn.js';
+import { sha256 } from "@noble/hashes/sha256";
+import { bytesToHex } from '@noble/hashes/utils';
+import { BorshAccountsCoder } from '@coral-xyz/anchor';
 
 // Thêm hằng số cho chuẩn hóa signature
 const SECP256R1_ORDER = new BN('FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551', 16);
@@ -134,6 +136,15 @@ enum VerificationStatus {
   VERIFYING = 'verifying',
   SUCCESS = 'success',
   ERROR = 'error'
+}
+
+// Function helper để định dạng số giống Rust - format!("{}", f64)
+function formatLikeRust(num: number): string {
+  // Chuyển thành chuỗi với đủ số thập phân
+  const str = num.toString();
+  
+  // Loại bỏ các số 0 ở cuối và dấu thập phân nếu không cần thiết
+  return str.replace(/\.?0+$/, '');
 }
 
 export const TransferForm: React.FC<TransferFormProps> = ({
@@ -291,12 +302,25 @@ export const TransferForm: React.FC<TransferFormProps> = ({
         throw new Error('Vui lòng nhập số lượng SOL hợp lệ');
       }
       
-      // Chuyển đổi số lượng SOL sang lamports
-      const amountLamports = Math.floor(parseFloat(amount) * LAMPORTS_PER_SOL);
+      // Lấy PDA từ credential ID
+      const multisigPDA = await getMultisigPDA(credentialId);
+      console.log('MultisigPDA:', multisigPDA.toBase58());
+      
+      // Lấy PDA của guardian
+      const guardianPDA = await getGuardianPDA(multisigPDA, guardianId);
+      console.log('GuardianPDA:', guardianPDA.toBase58());
+      
+      // Chuyển đổi SOL sang lamports
+      const amountLamports = parseFloat(amount) * LAMPORTS_PER_SOL;
       
       // Kiểm tra số dư
-      if (amountLamports > pdaBalance * LAMPORTS_PER_SOL) {
-        throw new Error('Số dư không đủ để thực hiện giao dịch');
+      const balance = await connection.getBalance(multisigPDA);
+      if (balance < amountLamports) {
+        throw new Error(
+          `Số dư không đủ. Hiện tại: ${
+            balance / LAMPORTS_PER_SOL
+          } SOL, Cần: ${amount} SOL`
+        );
       }
       
       // Kiểm tra địa chỉ hợp lệ
@@ -307,39 +331,186 @@ export const TransferForm: React.FC<TransferFormProps> = ({
         throw new Error('Địa chỉ đích không hợp lệ');
       }
       
-      // Thêm 1 vào nonce hiện tại
-      const nextNonce = nonce + 1;
+      // Tạo ví tạm để trả phí giao dịch
+      const feePayer = web3.Keypair.generate();
+      
+      // Xin SOL airdrop để trả phí
+      try {
+        const airdropSignature = await connection.requestAirdrop(
+          feePayer.publicKey,
+          web3.LAMPORTS_PER_SOL / 50 // 0.02 SOL để trả phí
+        );
+        await connection.confirmTransaction(airdropSignature);
+        
+        // Kiểm tra số dư sau khi airdrop
+        const feePayerBalance = await connection.getBalance(feePayer.publicKey);
+        console.log(
+          `Fee payer balance: ${feePayerBalance / LAMPORTS_PER_SOL} SOL`
+        );
+        
+        if (feePayerBalance === 0) {
+          throw new Error("Không thể airdrop SOL cho fee payer");
+        }
+      } catch (airdropError) {
+        console.warn("Không thể airdrop SOL để trả phí:", airdropError);
+        // Tiếp tục thực hiện vì có thể account đã có sẵn SOL
+      }
+      
+      // ĐỌC NONCE TỪ BLOCKCHAIN
+      console.log('=== ĐỌC TRANSACTION NONCE HIỆN TẠI TỪ BLOCKCHAIN ===');
+      
+      // Đọc thông tin tài khoản multisig từ blockchain
+      const multisigAccountInfo = await connection.getAccountInfo(multisigPDA);
+      if (!multisigAccountInfo) {
+          throw new Error(`Không tìm thấy tài khoản multisig: ${multisigPDA.toString()}`);
+      }
+      
+      console.log('Tài khoản multisig tồn tại, độ dài data:', multisigAccountInfo.data.length);
+      
+      // Offset của transaction_nonce
+      // 8 bytes (discriminator) + 1 byte (threshold) + 1 byte (guardian_count) + 8 bytes (recovery_nonce) + 1 byte (bump) = 19
+      const nonceOffset = 19;
+      
+      // Đọc 8 bytes của transaction_nonce
+      const nonceBytes = multisigAccountInfo.data.slice(nonceOffset, nonceOffset + 8);
+      const currentNonce = new BN(nonceBytes, 'le');
+      
+      // Tính nonce tiếp theo
+      const nextNonce = currentNonce.addn(1).toNumber();
+      
+      console.log('Nonce hiện tại (hex):', Buffer.from(nonceBytes).toString('hex'));
+      console.log('Nonce hiện tại:', currentNonce.toString());
+      console.log('Nonce tiếp theo (sẽ sử dụng):', nextNonce);
       
       // Lấy timestamp hiện tại (giây)
       const timestamp = Math.floor(Date.now() / 1000);
       
-      // Tạo message chuẩn theo format phía backend yêu cầu:
-      // "transfer:{amount}_SOL_to_{destination},nonce:{nonce},timestamp:{timestamp}"
-      const formattedAmount = parseFloat(amount).toString(); // Đảm bảo định dạng số không có số 0 thừa
-      const messageString = `transfer:${formattedAmount}_SOL_to_${destinationAddress},nonce:${nextNonce},timestamp:${timestamp}`;
+      // LẤY WEBAUTHN PUBLIC KEY
+      console.log('Lấy WebAuthn public key...');
+      let webAuthnPubKey: Buffer;
+      
+      // Thử tìm trong Firebase
+      const credentialMapping = await getWalletByCredentialId(credentialId);
+      
+      if (!credentialMapping || !credentialMapping.guardianPublicKey || credentialMapping.guardianPublicKey.length === 0) {
+        // Thử tìm trong localStorage
+        console.log('Không tìm thấy trong Firebase, thử tìm trong localStorage...');
+          const localStorageData = localStorage.getItem('webauthn_credential_' + credentialId);
+          if (localStorageData) {
+            const localMapping = JSON.parse(localStorageData);
+            if (localMapping && localMapping.guardianPublicKey && localMapping.guardianPublicKey.length > 0) {
+            webAuthnPubKey = Buffer.from(new Uint8Array(localMapping.guardianPublicKey));
+          } else {
+            throw new Error('Không tìm thấy WebAuthn public key trong localStorage');
+          }
+        } else {
+          throw new Error('Không tìm thấy WebAuthn public key');
+        }
+      } else {
+        // Sử dụng WebAuthn public key từ Firebase
+        webAuthnPubKey = Buffer.from(new Uint8Array(credentialMapping.guardianPublicKey));
+      }
+      
+      // Kiểm tra độ dài khóa
+              if (webAuthnPubKey.length !== 33) {
+        console.warn(`WebAuthn public key có độ dài không đúng: ${webAuthnPubKey.length} bytes, cần 33 bytes`);
+      }
+      
+      // Tính toán hash của WebAuthn public key - thực hiện đúng như trong contract
+      console.log('WebAuthn Public Key (Hex):', Buffer.from(webAuthnPubKey).toString('hex'));
+      
+      // Tính hash sử dụng sha256 giống contract
+      const hashBytes = sha256(Buffer.from(webAuthnPubKey));
+      const fullHashHex = Buffer.from(hashBytes).toString('hex');
+      console.log('Full SHA-256 Hash (Hex):', fullHashHex);
+      
+      // Lấy 6 bytes đầu tiên của hash
+      const hashBytesStart = hashBytes.slice(0, 6);
+      
+      // Chuyển đổi sang hex string giống hàm to_hex trong contract
+      const pubkeyHashHex = Array.from(hashBytesStart)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      
+      console.log('First 6 bytes of Hash (12 hex chars):', pubkeyHashHex);
+      
+      // Thử thêm log để debug từng byte
+      console.log('Hash bytes (first 6):', Array.from(hashBytesStart));
+      console.log('Hash hex format with contract matching:');
+      Array.from(hashBytesStart).forEach((byte, i) => {
+        const hex = byte.toString(16).padStart(2, '0');
+        console.log(`Byte ${i}: ${byte} -> hex: ${hex}`);
+      });
+      
+      // Thêm log để kiểm tra nếu nonce, timestamp, và các giá trị khác được xử lý đúng
+      console.log('Nonce:', nextNonce);
+      console.log('Timestamp:', timestamp);
+      console.log('Destination address:', destinationAddress);
+      console.log('===========================');
+      
+      // Format số lượng SOL để khớp với Rust
+      // Rust sẽ tính lại: amount as f64 / 1_000_000_000.0
+      // Rust sẽ chuyển số thực sang chuỗi sử dụng format! không có trailing zeros
+      const amountInSol = amountLamports / LAMPORTS_PER_SOL;
+      
+      // Thử các cách định dạng số khác nhau
+      console.log('===== DEBUG AMOUNT FORMAT =====');
+      console.log('Amount (lamports):', amountLamports);
+      console.log('Amount (SOL):', amountInSol);
+      
+      // Cách 1: Loại bỏ số 0 ở cuối và trong một số trường hợp cả dấu chấm thập phân
+      const amount1 = amountInSol.toString().replace(/\.?0+$/, '');
+      console.log('Format 1 (remove trailing zeros):', amount1);
+      
+      // Cách 2: Định dạng số theo Rust - format!("{}", f64)
+      const amount2 = formatLikeRust(amountInSol);
+      console.log('Format 2 (Rust format!):', amount2);
+      
+      // Cách 3: Sử dụng phương thức Rust thực tế gọi là Display 
+      const amount3 = parseFloat(amountInSol.toString()).toString();
+      console.log('Format 3 (parseFloat):', amount3);
+      
+      // Sử dụng định dạng giống Rust nhất
+      const formattedAmount = amount2;
+      console.log('Formatted amount được sử dụng:', formattedAmount);
+      console.log('============================');
+      
+      // Thêm phần này để kiểm tra các giá trị trước khi gửi
+      console.log('===== TEST MESSAGE WITH DIFFERENT HASH VALUES =====');
+      
+      // Tạo các hash thử nghiệm khác nhau
+      const testHashes = [
+        pubkeyHashHex,               // Hash tính từ frontend
+        "e6cda2b8e0ad",              // Hash tính từ log trước đó
+        "000000000000",              // Hash zero
+        "cafebabe1234",              // Hash tùy ý khác
+      ];
+      
+      // Thử từng hash và in ra message tương ứng
+      for (const testHash of testHashes) {
+        const testMessage = `transfer:${formattedAmount}_SOL_to_${destinationAddress},nonce:${nextNonce},timestamp:${timestamp},pubkey:${testHash}`;
+        console.log(`Test message với hash [${testHash}]:`, testMessage);
+      }
+      
+      console.log('=================================================');
+      
+      // Sử dụng hash tính được để tạo message
+      const messageString = `transfer:${formattedAmount}_SOL_to_${destinationAddress},nonce:${nextNonce},timestamp:${timestamp},pubkey:${pubkeyHashHex}`;
+      
+      // Debug chi tiết hơn
+      console.log('===== DEBUG MESSAGE =====');
       console.log('Message gốc:', messageString);
+      console.log('Message length:', messageString.length);
+      console.log('Message bytes array:', Array.from(new TextEncoder().encode(messageString)));
+      console.log('Message bytes detailed:', Array.from(new TextEncoder().encode(messageString))
+        .map((b, i) => `[${i}] ${b} (${String.fromCharCode(b)})`).join(', '));
+      console.log('Message hex:', Buffer.from(messageString).toString('hex'));
+      console.log('========================');
       
       // Chuyển message thành bytes
       const messageBytes = new TextEncoder().encode(messageString);
       
-      console.log('Message bytes (UTF-8):', Array.from(messageBytes));
-      console.log('Message bytes (hex):', Array.from(messageBytes).map(b => b.toString(16).padStart(2, '0')).join(''));
-      
-      // Tính hash của message
-      const messageHash = await crypto.subtle.digest('SHA-256', messageBytes);
-      const messageHashBytes = new Uint8Array(messageHash);
-      console.log('Message hash bytes (hex):', Buffer.from(messageHashBytes).toString('hex'));
-      console.log('Message hash bytes (array):', Array.from(messageHashBytes));
-      
-      // Lấy PDA từ credential ID
-      const multisigPDA = await getMultisigPDA(credentialId);
-      console.log('MultisigPDA:', multisigPDA.toBase58());
-      
-      // Lấy PDA của guardian
-      const guardianPDA = await getGuardianPDA(multisigPDA, guardianId);
-      console.log('GuardianPDA:', guardianPDA.toBase58());
-      
-      // Ký message bằng WebAuthn
+      // Thử ký bằng WebAuthn
       setTxStatus(TransactionStatus.SIGNING);
       
       // Hiển thị thông báo
@@ -347,8 +518,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       setError(''); // Xóa thông báo lỗi trước đó
       setSuccess('Đang hiển thị danh sách khóa WebAuthn, vui lòng chọn khóa để xác thực giao dịch...');
       
-      // Sử dụng trực tiếp message gốc làm dữ liệu để ký với WebAuthn
-      // WebAuthn sẽ tự động hash dữ liệu này với SHA-256 trước khi ký
+      // Sử dụng trực tiếp message làm dữ liệu để ký với WebAuthn
       const assertion = await getWebAuthnAssertion(credentialId, messageString, true);
       
       if (!assertion) {
@@ -358,35 +528,9 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       console.log('Đã ký thành công bằng WebAuthn');
       console.log('ClientDataJSON:', new TextDecoder().decode(assertion.clientDataJSON));
       
-      // Phân tích clientDataJSON để hiểu cách WebAuthn hash message
-      try {
-        const clientDataObj = JSON.parse(new TextDecoder().decode(assertion.clientDataJSON));
-        console.log('ClientData object:', clientDataObj);
-        
-        // Lấy challenge từ clientData
-        if (clientDataObj.challenge) {
-          const challengeBase64 = clientDataObj.challenge;
-          // Fix lỗi base64url encoding
-          const base64Standard = challengeBase64
-            .replace(/-/g, '+')
-            .replace(/_/g, '/')
-            .padEnd(challengeBase64.length + (4 - challengeBase64.length % 4) % 4, '=');
-          const challengeBytes = Buffer.from(base64Standard, 'base64');
-          
-          console.log('Challenge từ WebAuthn (hex):', challengeBytes.toString('hex'));
-        }
-      } catch (e) {
-        console.error('Lỗi khi phân tích clientDataJSON:', e);
-      }
-      
       setSuccess(''); // Xóa thông báo thành công tạm thời
       
-      // Lấy chữ ký từ WebAuthn assertion và chuyển đổi từ DER sang raw format
-      console.log('Signature từ WebAuthn (DER format):', Buffer.from(assertion.signature).toString('hex'));
-      console.log('Độ dài signature ban đầu:', assertion.signature.byteLength);
-      
       // Chuyển đổi signature từ DER sang raw format (r, s)
-      // Sử dụng hàm từ utils/webauthnUtils.ts
       const derToRaw = (derSignature: Uint8Array): Uint8Array => {
         try {
           // Kiểm tra format DER
@@ -417,7 +561,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
           if (r.length <= 32) {
             // Trường hợp r ngắn hơn 32 bytes, thêm padding
             rPadded.set(r, 32 - r.length);
-          } else {
+                    } else {
             // Trường hợp r dài hơn 32 bytes (thường là có byte 0x00 ở đầu), lấy 32 bytes cuối
             rPadded.set(r.slice(r.length - 32));
           }
@@ -425,7 +569,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
           if (s.length <= 32) {
             // Trường hợp s ngắn hơn 32 bytes, thêm padding
             sPadded.set(s, 32 - s.length);
-          } else {
+                } else {
             // Trường hợp s dài hơn 32 bytes, lấy 32 bytes cuối
             sPadded.set(s.slice(s.length - 32));
           }
@@ -434,10 +578,6 @@ export const TransferForm: React.FC<TransferFormProps> = ({
           const rawSignature = new Uint8Array(64);
           rawSignature.set(rPadded);
           rawSignature.set(sPadded, 32);
-          
-          console.log('Raw signature sau khi chuyển đổi (r||s):');
-          console.log('- Length:', rawSignature.length);
-          console.log('- Hex:', Buffer.from(rawSignature).toString('hex'));
           
           return rawSignature;
         } catch (e) {
@@ -450,273 +590,34 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       const signature = Buffer.from(rawSignature);
       
       console.log('Signature sau khi chuyển đổi (raw format):', signature.toString('hex'));
-      console.log('Độ dài signature sau khi chuyển đổi:', signature.length);
       
-      // Thêm bước chuẩn hóa signature về dạng Low-S
+      // Chuẩn hóa signature về dạng Low-S
       const normalizedSignature = normalizeSignatureToLowS(signature);
       console.log("Signature sau khi chuẩn hóa (Low-S format):", normalizedSignature.toString("hex"));
-      
-      // LẤY WEBAUTHN PUBLIC KEY TỪ FIREBASE
-      console.log('Lấy WebAuthn public key từ Firebase...');
-      const credentialMapping = await getWalletByCredentialId(credentialId);
-      
-      if (!credentialMapping || !credentialMapping.guardianPublicKey || credentialMapping.guardianPublicKey.length === 0) {
-        // Thử tìm trong localStorage nếu không có trong Firebase
-        console.log('Không tìm thấy trong Firebase, thử tìm trong localStorage...');
-        try {
-          const localStorageData = localStorage.getItem('webauthn_credential_' + credentialId);
-          if (localStorageData) {
-            const localMapping = JSON.parse(localStorageData);
-            if (localMapping && localMapping.guardianPublicKey && localMapping.guardianPublicKey.length > 0) {
-              console.log('Đã tìm thấy WebAuthn public key trong localStorage:', localMapping);
-              
-              // Tạo webAuthnPubKey từ dữ liệu trong localStorage
-              const webAuthnPubKey = Buffer.from(new Uint8Array(localMapping.guardianPublicKey));
-              
-              // Kiểm tra độ dài
-              if (webAuthnPubKey.length !== 33) {
-                console.warn(`WebAuthn public key từ localStorage có độ dài không đúng: ${webAuthnPubKey.length} bytes, cần 33 bytes`);
-              }
-              
-              // Tạo instruction secp256r1
-              setTxStatus(TransactionStatus.BUILDING_TX);
-              
-              // Quan trọng: Đảm bảo message được sử dụng ở đây là đúng
-              // Sử dụng message gốc từ messageString để hash lại
-              const messageBytes = new TextEncoder().encode(messageString);
-              const messageHash = await crypto.subtle.digest('SHA-256', messageBytes);
-              const messageHashBuffer = Buffer.from(new Uint8Array(messageHash));
-              
-              console.log('Message gốc:', messageString);
-              console.log('Message hash (SHA-256):', messageHashBuffer.toString('hex'));
-              
-              // Tạo instruction cho secp256r1
-              const secp256r1Ix = createSecp256r1Instruction(
-                messageHashBuffer, // Sử dụng hash của message
-                webAuthnPubKey, // publicKey
-                normalizedSignature, // signature đã chuẩn hóa
-                true // Thử đảo ngược public key
-              );
-              
-              console.log("Secp256r1 instruction data:", {
-                programId: secp256r1Ix.programId.toString(),
-                dataLength: secp256r1Ix.data.length,
-                dataHex: Buffer.from(secp256r1Ix.data).toString('hex').substring(0, 60) + '...',
-                pubkeyLength: webAuthnPubKey.length,
-                signatureLength: normalizedSignature.length,
-                messageLength: messageHashBuffer.length
-              });
-              
-              // Tạo ví tạm để trả phí giao dịch
-              const feePayer = web3.Keypair.generate();
-              
-              // Xin SOL airdrop để trả phí
-              try {
-                const airdropSignature = await connection.requestAirdrop(
-                  feePayer.publicKey,
-                  web3.LAMPORTS_PER_SOL / 50 // 0.02 SOL để trả phí
-                );
-                await connection.confirmTransaction(airdropSignature);
-                
-                // Kiểm tra số dư sau khi airdrop
-                const feePayerBalance = await connection.getBalance(feePayer.publicKey);
-                console.log(`Fee payer balance: ${feePayerBalance / LAMPORTS_PER_SOL} SOL`);
-                
-                if (feePayerBalance === 0) {
-                  throw new Error('Không thể airdrop SOL cho fee payer');
-                }
-              } catch (airdropError) {
-                console.warn('Không thể airdrop SOL để trả phí:', airdropError);
-                // Tiếp tục thực hiện vì có thể account đã có sẵn SOL
-              }
-              
-              // Tiếp tục quá trình xử lý transaction như bình thường
-              const transferTx = createTransferTx(
-                multisigPDA,
-                guardianPDA,
-                destinationPublicKey,
-                amountLamports,
-                nextNonce,
-                timestamp,
-                Buffer.from(messageHashBuffer), // Sử dụng hash đã tính toán
-                feePayer.publicKey
-              );
-              
-              // QUAN TRỌNG: Đặt secp256r1 instruction là ix đầu tiên (phải đứng trước verify_and_execute)
-              transferTx.instructions.unshift(secp256r1Ix);
-              
-              // Đặt fee payer và blockhash
-              transferTx.feePayer = feePayer.publicKey;
-              const { blockhash } = await connection.getLatestBlockhash();
-              transferTx.recentBlockhash = blockhash;
-              
-              // Ký transaction bằng fee payer
-              transferTx.sign(feePayer);
-              
-              // Log transaction để debug
-              console.log("Transaction info:", {
-                feePayer: feePayer.publicKey.toString(),
-                instructions: transferTx.instructions.map(ix => ({
-                  programId: ix.programId.toString(),
-                  keys: ix.keys.map(k => ({
-                    pubkey: k.pubkey.toString(),
-                    isSigner: k.isSigner,
-                    isWritable: k.isWritable
-                  })),
-                  dataSize: ix.data.length
-                }))
-              });
-              
-              // Gửi transaction
-              setTxStatus(TransactionStatus.SUBMITTING);
-              
-              try {
-                console.log('Sending transaction with secp256r1 instruction...');
-                console.log('Skip preflight:', true);
-                
-                const transactionId = await connection.sendRawTransaction(transferTx.serialize(), {
-                  skipPreflight: true, // Bỏ qua preflight để tránh lỗi với instruction phức tạp
-                  preflightCommitment: 'confirmed'
-                });
-                
-                console.log('Transaction đã được gửi với ID:', transactionId);
-                
-                setTxId(transactionId);
-                console.log('Transaction ID:', transactionId);
-                
-                // Chờ xác nhận
-                setTxStatus(TransactionStatus.CONFIRMING);
-                
-                const confirmation = await connection.confirmTransaction(transactionId, 'confirmed');
-                
-                if (confirmation.value.err) {
-                  throw new Error(`Lỗi khi xác nhận giao dịch: ${JSON.stringify(confirmation.value.err)}`);
-                }
-                
-                // Hiển thị thông báo thành công
-                setTxStatus(TransactionStatus.SUCCESS);
-                setSuccess(`Đã chuyển ${amount} SOL đến ${destinationAddress} thành công! ID giao dịch: ${transactionId}`);
-                setAmount('');
-                setDestinationAddress('');
-                
-                // Gọi callback nếu có
-                if (onTransferSuccess) {
-                  onTransferSuccess();
-                }
-                
-                return; // Không tiếp tục chạy code bên dưới
-              } catch (sendError: any) {
-                // Xử lý lỗi SendTransactionError
-                if (sendError instanceof SendTransactionError) {
-                  console.error("Transaction simulation failed:", sendError);
-                  console.error("Error details:", sendError.message);
-                  
-                  if (sendError.logs) {
-                    console.error("Transaction logs:", sendError.logs);
-                  }
-                  
-                  // Cố gắng lấy logs chi tiết
-                  let logs = "";
-                  try {
-                    if (sendError.logs && Array.isArray(sendError.logs)) {
-                      logs = sendError.logs.join('\n');
-                    } else {
-                      logs = "Không có logs chi tiết.";
-                    }
-                  } catch (logError) {
-                    logs = "Không thể lấy logs chi tiết.";
-                  }
-                  
-                  // Phân tích lỗi để đưa ra hướng dẫn cụ thể
-                  let errorMessage = `Lỗi khi gửi giao dịch: ${sendError.message}\n\n`;
-                  
-                  if (logs.includes("Attempt to load a program that does not exist")) {
-                    // Xử lý lỗi chương trình không tồn tại
-                    if (logs.includes(programID.toString())) {
-                      errorMessage += `Chương trình MoonWallet chưa được cài đặt trên validator.\n`;
-                      errorMessage += `Địa chỉ chương trình: ${programID.toString()}\n\n`;
-                      errorMessage += `Hãy cài đặt chương trình với lệnh:\n`;
-                      errorMessage += `solana-test-validator --bpf-program ${programID.toString()} path/to/moon_wallet.so`;
-                    } else if (logs.includes(SECP256R1_PROGRAM_ID.toString())) {
-                      errorMessage += `Chương trình Secp256r1 chưa được cài đặt trên validator.\n`;
-                      errorMessage += `Địa chỉ chương trình: ${SECP256R1_PROGRAM_ID.toString()}\n\n`;
-                      errorMessage += `Hãy cài đặt chương trình với lệnh:\n`;
-                      errorMessage += `solana-test-validator --bpf-program ${SECP256R1_PROGRAM_ID.toString()} path/to/secp256r1_verify.so`;
-                    } else {
-                      errorMessage += `Một chương trình cần thiết không tồn tại trên validator.\n\n`;
-                      errorMessage += `Chi tiết lỗi: ${logs}\n\n`;
-                      errorMessage += `Thông tin kết nối:\n`;
-                      errorMessage += `- Endpoint validator: ${connectionEndpoint}\n`;
-                    }
-                  } else {
-                    // Lỗi khác
-                    errorMessage += `Chi tiết lỗi: ${logs}\n\n`;
-                    errorMessage += `Thông tin kết nối:\n`;
-                    errorMessage += `- Endpoint validator: ${connectionEndpoint}\n`;
-                    errorMessage += `- MoonWallet Program: ${isMoonWalletAvailable ? '✅ Đã cài đặt' : '❌ Chưa cài đặt'} (${programID.toString()})`;
-                  }
-                  
-                  throw new Error(errorMessage);
-                } else {
-                  throw sendError;
-                }
-              }
-            }
-          }
-        } catch (localStorageError) {
-          console.error('Lỗi khi đọc từ localStorage:', localStorageError);
-        }
-        
-        // Nếu không tìm thấy trong localStorage, thử lấy từ account data
-        console.warn('Không tìm thấy WebAuthn public key trong localStorage, thử lấy từ guardian account...');
-        
-        // Lấy dữ liệu tài khoản guardian để lấy public key
-      const guardianAccount = await connection.getAccountInfo(guardianPDA);
-      
-      if (!guardianAccount) {
-        throw new Error('Không thể tìm thấy thông tin guardian');
-      }
-      
-        // Lấy WebAuthn public key từ guardian account
-        // Giả sử webauthn_pubkey nằm ở vị trí phù hợp trong account data
-        // Offset phụ thuộc vào layout của Anchor account
-        // NOTE: Đây là ví dụ, offset thực tế cần được xác định chính xác dựa trên layout của account
-        // +8 (discriminator) + 32 (wallet) + 8 (guardian_id) + nameLen + 1 (is_active) + 32 (recovery_hash) + 1 (is_owner) = ~82
-        // webauthn_pubkey là Option<[u8; 33]> nên có thêm 1 byte đánh dấu Some(1) hoặc None(0)
-        
-        let webAuthnPubKey: Buffer; 
-        // Giả định cho mục đích demo - trong thực tế bạn cần đọc đúng vị trí
-        if (guardianAccount.data.length > 100) {
-          const hasWebAuthnPubKey = guardianAccount.data[83] === 1; // 1 = Some, 0 = None
-          if (hasWebAuthnPubKey) {
-            webAuthnPubKey = Buffer.from(guardianAccount.data.slice(84, 84 + 33));
-          } else {
-            throw new Error('Guardian không có WebAuthn public key trong account data');
-          }
-        } else {
-          // Nếu không thể đọc được dữ liệu, báo lỗi
-          throw new Error('Không thể đọc được public key từ guardian account (dữ liệu quá ngắn)');
-        }
-      } else {
-        // Sử dụng WebAuthn public key từ Firebase
-        console.log('Đã tìm thấy WebAuthn public key trong Firebase:', credentialMapping.guardianPublicKey);
-        // Chuyển đổi từ mảng số về Buffer
-        const webAuthnPubKey = Buffer.from(new Uint8Array(credentialMapping.guardianPublicKey));
-        
-        // Kiểm tra độ dài khóa
-        if (webAuthnPubKey.length !== 33) {
-          console.warn(`WebAuthn public key từ Firebase có độ dài không đúng: ${webAuthnPubKey.length} bytes, cần 33 bytes`);
-        }
       
       // Tạo instruction secp256r1
       setTxStatus(TransactionStatus.BUILDING_TX);
       
-        // Thêm tham số để thử với public key bị đảo
+      // ĐÚNG QUY TRÌNH XÁC MINH WEBAUTHN:
+      // 1. Tính hash của clientDataJSON
+      const clientDataHash = await crypto.subtle.digest('SHA-256', assertion.clientDataJSON);
+      const clientDataHashBytes = new Uint8Array(clientDataHash);
+      console.log('clientDataJSON hash:', Buffer.from(clientDataHashBytes).toString('hex'));
+      
+      // 2. Tạo verification data đúng cách: authenticatorData + hash(clientDataJSON)
+      const verificationData = new Uint8Array(assertion.authenticatorData.length + clientDataHashBytes.length);
+      verificationData.set(new Uint8Array(assertion.authenticatorData), 0);
+      verificationData.set(clientDataHashBytes, assertion.authenticatorData.length);
+      
+      console.log('Verification data length:', verificationData.length);
+      console.log('Verification data (hex):', Buffer.from(verificationData).toString('hex'));
+      
+      // Tạo instruction cho secp256r1 với verification data
       const secp256r1Ix = createSecp256r1Instruction(
-        Buffer.from(messageHashBytes), // Sử dụng hash của message thay vì message gốc
+        Buffer.from(verificationData), // Sử dụng verification data
         webAuthnPubKey, // publicKey
         normalizedSignature, // signature đã chuẩn hóa
-        true // Đảo ngược public key để thử
+        false // Không đảo ngược public key
       );
       
         console.log("Secp256r1 instruction data:", {
@@ -725,33 +626,10 @@ export const TransferForm: React.FC<TransferFormProps> = ({
           dataHex: Buffer.from(secp256r1Ix.data).toString('hex').substring(0, 60) + '...',
           pubkeyLength: webAuthnPubKey.length,
           signatureLength: normalizedSignature.length,
-          messageLength: messageHashBytes.length
-        });
-        
-        // Tạo ví tạm để trả phí giao dịch
-      const feePayer = web3.Keypair.generate();
+        messageLength: verificationData.length
+      });
       
-      // Xin SOL airdrop để trả phí
-        try {
-      const airdropSignature = await connection.requestAirdrop(
-        feePayer.publicKey,
-            web3.LAMPORTS_PER_SOL / 50 // 0.02 SOL để trả phí
-      );
-      await connection.confirmTransaction(airdropSignature);
-      
-          // Kiểm tra số dư sau khi airdrop
-          const feePayerBalance = await connection.getBalance(feePayer.publicKey);
-          console.log(`Fee payer balance: ${feePayerBalance / LAMPORTS_PER_SOL} SOL`);
-          
-          if (feePayerBalance === 0) {
-            throw new Error('Không thể airdrop SOL cho fee payer');
-          }
-        } catch (airdropError) {
-          console.warn('Không thể airdrop SOL để trả phí:', airdropError);
-          // Tiếp tục thực hiện vì có thể account đã có sẵn SOL
-        }
-        
-        // Tạo transaction với verify_and_execute instruction
+      // Tiếp tục quá trình xử lý transaction như bình thường
       const transferTx = createTransferTx(
         multisigPDA,
         guardianPDA,
@@ -759,11 +637,12 @@ export const TransferForm: React.FC<TransferFormProps> = ({
         amountLamports,
         nextNonce,
         timestamp,
-          Buffer.from(messageHashBytes), // Sử dụng messageHashBytes (message gốc, chưa hash) cho verify_and_execute
-        feePayer.publicKey
+        Buffer.from(messageBytes), // Sử dụng message gốc, không phải hash
+        feePayer.publicKey,
+        credentialId  // Truyền credential ID gốc
       );
       
-        // Đặt secp256r1 instruction là ix đầu tiên (phải đứng trước verify_and_execute)
+      // QUAN TRỌNG: Đặt secp256r1 instruction là ix đầu tiên (phải đứng trước verify_and_execute)
         transferTx.instructions.unshift(secp256r1Ix);
       
       // Đặt fee payer và blockhash
@@ -792,6 +671,9 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       setTxStatus(TransactionStatus.SUBMITTING);
       
         try {
+        console.log('Sending transaction with secp256r1 instruction...');
+        console.log('Skip preflight:', true);
+        
           const transactionId = await connection.sendRawTransaction(transferTx.serialize(), {
             skipPreflight: true, // Bỏ qua preflight để tránh lỗi với instruction phức tạp
             preflightCommitment: 'confirmed'
@@ -821,6 +703,8 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       if (onTransferSuccess) {
         onTransferSuccess();
           }
+        
+        return; // Không tiếp tục chạy code bên dưới
         } catch (sendError: any) {
           // Xử lý lỗi SendTransactionError
           if (sendError instanceof SendTransactionError) {
@@ -875,7 +759,6 @@ export const TransferForm: React.FC<TransferFormProps> = ({
             throw new Error(errorMessage);
           } else {
             throw sendError;
-          }
         }
       }
     } catch (error: any) {
@@ -898,10 +781,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
     setVerificationMessage('');
     
     try {
-      // Kiểm tra nếu MoonWallet program không khả dụng
-      if (!isMoonWalletAvailable) {
-        throw new Error("Chương trình MoonWallet không tồn tại trên validator");
-      }
+   
       
       // Tạo message mẫu để xác minh (có thể thay đổi theo yêu cầu)
       const testMessage = `Test message for signature verification,timestamp:${Math.floor(Date.now() / 1000)}`;
@@ -930,17 +810,8 @@ export const TransferForm: React.FC<TransferFormProps> = ({
         throw new Error('Lỗi khi ký message bằng WebAuthn hoặc người dùng đã hủy xác thực');
       }
       
-      console.log('Đã ký thành công bằng WebAuthn');
-      console.log('ClientDataJSON:', new TextDecoder().decode(assertion.clientDataJSON));
-      
-      // Phân tích clientDataJSON
       const clientDataObj = JSON.parse(new TextDecoder().decode(assertion.clientDataJSON));
-      console.log('ClientData object:', clientDataObj);
-      
-      // Lấy chữ ký từ WebAuthn assertion và chuyển đổi từ DER sang raw format
-      console.log('Signature từ WebAuthn (DER format):', Buffer.from(assertion.signature).toString('hex'));
-      
-      // Chuyển đổi signature từ DER sang raw format (r, s)
+     
       const derToRaw = (derSignature: Uint8Array): Uint8Array => {
         try {
           // Kiểm tra format DER
@@ -988,10 +859,6 @@ export const TransferForm: React.FC<TransferFormProps> = ({
           const rawSignature = new Uint8Array(64);
           rawSignature.set(rPadded);
           rawSignature.set(sPadded, 32);
-          
-          console.log('Raw signature sau khi chuyển đổi (r||s):');
-          console.log('- Length:', rawSignature.length);
-          console.log('- Hex:', Buffer.from(rawSignature).toString('hex'));
           
           return rawSignature;
         } catch (e) {
@@ -1090,10 +957,10 @@ export const TransferForm: React.FC<TransferFormProps> = ({
         
         console.log("Gửi transaction với public key không đảo ngược...");
         const txid1 = await connection.sendRawTransaction(transaction1.serialize(), {
-          skipPreflight: true,
-          preflightCommitment: 'confirmed'
-        });
-        
+        skipPreflight: true,
+        preflightCommitment: 'confirmed'
+      });
+      
         console.log('Transaction xác minh chữ ký đã được gửi với ID:', txid1);
         
         const confirmation1 = await connection.confirmTransaction(txid1, 'confirmed');
@@ -1109,45 +976,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       } catch (error1) {
         console.error("Lỗi khi xác minh với public key không đảo ngược:", error1);
         
-        // Cách 2: Đảo byte đầu tiên
-        try {
-          console.log("Thử xác minh với public key đảo ngược...");
-          
-          const secp256r1Ix2 = createSecp256r1Instruction(
-            verificationDataBuffer,
-            webAuthnPubKey,
-            normalizedSignature,
-            true // Đảo ngược public key
-          );
-          
-          const transaction2 = new Transaction().add(secp256r1Ix2);
-          transaction2.feePayer = feePayer.publicKey;
-          const { blockhash } = await connection.getLatestBlockhash();
-          transaction2.recentBlockhash = blockhash;
-          transaction2.sign(feePayer);
-          
-          console.log("Gửi transaction với public key đảo ngược...");
-          const txid2 = await connection.sendRawTransaction(transaction2.serialize(), {
-            skipPreflight: true,
-            preflightCommitment: 'confirmed'
-          });
-          
-          console.log('Transaction xác minh chữ ký đã được gửi với ID:', txid2);
-          
-          const confirmation2 = await connection.confirmTransaction(txid2, 'confirmed');
-          if (confirmation2.value.err) {
-            console.error("Lỗi khi xác minh với public key đảo ngược:", confirmation2.value.err);
-            throw new Error(`Lỗi: ${JSON.stringify(confirmation2.value.err)}`);
-          } else {
-            console.log("XÁC MINH THÀNH CÔNG với public key đảo ngược!");
-            setVerificationStatus(VerificationStatus.SUCCESS);
-            setVerificationMessage(`Xác minh chữ ký thành công! ID giao dịch: ${txid2}`);
-            return;
-          }
-        } catch (error2) {
-          console.error("Lỗi khi xác minh với public key đảo ngược:", error2);
-          throw new Error('Không thể xác minh chữ ký với cả hai cách: đảo và không đảo public key');
-        }
+       
       }
     } catch (error: any) {
       console.error('Lỗi khi xác minh chữ ký:', error);
@@ -1194,29 +1023,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
     return null;
   };
   
-  // Thêm các hàm tiện ích
-  const findMultisigPDA = async () => {
-    const credentialId = localStorage.getItem('currentCredentialId');
-    if (!credentialId) {
-      throw new Error("Không tìm thấy credential ID");
-    }
-    return getMultisigPDA(credentialId);
-  };
-
-  const findGuardianPDA = async (multisigPDA: PublicKey, guardianId: number) => {
-    return getGuardianPDA(multisigPDA, guardianId);
-  };
-
-  // Hàm chuyển đổi base64Url thành Buffer
-  const base64UrlToBuffer = (base64Url: string): ArrayBuffer => {
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const binaryString = window.atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes.buffer;
-  };
+  
   
   return (
     <div className="transfer-form">
